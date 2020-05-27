@@ -502,7 +502,7 @@ module CriticalPair = struct
 
   let make ~loc acquisitions event thread = make {acquisitions; event; thread} loc
 
-  let is_blocking_call {elem= {event}} = match event with LockAcquire _ -> true (* | _ -> false *)
+  (* let is_blocking_call {elem= {event}} = match event with LockAcquire _ -> true (\* | _ -> false *\) *)
 
   let get_final_acquire {elem= {event}} =
     match event with LockAcquire lock -> Some lock (* | _ -> None *)
@@ -647,9 +647,9 @@ module FlatLock = AbstractDomain.Flat (Lock)
 module GuardToLockMap = struct
   include AbstractDomain.InvertedMap (HilExp) (FlatLock)
 
-  let remove_guard astate guard = remove guard astate
-
-  let add_guard astate ~guard ~lock = add guard (FlatLock.v lock) astate
+  (* let remove_guard astate guard = remove guard astate
+   * 
+   * let add_guard astate ~guard ~lock = add guard (FlatLock.v lock) astate *)
 end
 
 
