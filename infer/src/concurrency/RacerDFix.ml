@@ -453,6 +453,15 @@ let analyze_procedure {Callbacks.exe_env; summary} =
         if Procdesc.is_java_synchronized proc_desc then LockDomain.(acquire_lock bottom)
         else LockDomain.bottom
       in
+      let loc = Procdesc.get_loc proc_desc in
+      let make_locks astate =
+        if Procdesc.is_java_synchronized proc_desc then
+          let formals = FormalMap.make proc_desc in
+          Lock.make_java_synchronized formals proc_name
+          |> Option.to_list
+          |> acquire ~tenv astate ~procname:proc_name ~loc
+        else astate
+      in
       let threads =
         if
           runs_on_ui_thread ~attrs_of_pname tenv proc_name
@@ -508,6 +517,7 @@ let analyze_procedure {Callbacks.exe_env; summary} =
             |> List.fold ~init ~f:add_conditional_owned_formal
         in
         {RacerDFixDomain.bottom with ownership; threads; locks}
+        |> make_locks
       else
         (* add Owned(formal_index) predicates for each formal to indicate that each one is owned if
            it is owned in the caller *)
