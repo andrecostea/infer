@@ -177,29 +177,29 @@ end
 module Event = struct
   type t =
     | LockAcquire of Lock.t
-    | MonitorWait of Lock.t
+    (* | MonitorWait of Lock.t *)
   [@@deriving compare]
 
   let pp fmt = function
     | LockAcquire lock ->
         F.fprintf fmt "LockAcquire(%a)" Lock.pp lock
-    | MonitorWait lock ->
-        F.fprintf fmt "MonitorWait(%a)" Lock.pp lock
+    (* | MonitorWait lock ->
+     *     F.fprintf fmt "MonitorWait(%a)" Lock.pp lock *)
 
 
   let describe fmt elem =
     match elem with
     | LockAcquire lock ->
         Lock.pp_locks fmt lock
-    | MonitorWait lock ->
-        F.fprintf fmt "calls `wait` on %a" Lock.describe lock
+    (* | MonitorWait lock ->
+     *     F.fprintf fmt "calls `wait` on %a" Lock.describe lock *)
 
   let make_acquire lock = LockAcquire lock
 
-  let make_object_wait lock = MonitorWait lock
+  (* let make_object_wait lock = MonitorWait lock *)
 
   let apply_subst subst event =
-    let make_monitor_wait lock = MonitorWait lock in
+    (* let make_monitor_wait lock = MonitorWait lock in *)
     let make_lock_acquire lock = LockAcquire lock in
     let apply_subst_aux make lock =
       match Lock.apply_subst subst lock with
@@ -211,8 +211,8 @@ module Event = struct
           Some (make lock')
     in
     match event with
-    | MonitorWait lock ->
-        apply_subst_aux make_monitor_wait lock
+    (* | MonitorWait lock ->
+     *     apply_subst_aux make_monitor_wait lock *)
     | LockAcquire lock ->
         apply_subst_aux make_lock_acquire lock
 end
@@ -323,8 +323,8 @@ end = struct
     match event with
     | Event.LockAcquire lock ->
         Acquisitions.mem (Acquisition.make_dummy lock) acquisitions
-    | _ ->
-        false
+    (* | _ -> *)
+        (* false *)
 
 
   let acquire ~procname ~loc lock {map; acquisitions} =
@@ -493,8 +493,8 @@ let is_recursive_lock event tenv =
   match event with
   | Event.LockAcquire lock_path ->
       Lock.get_typ tenv lock_path |> Option.exists ~f:is_class_and_recursive_lock
-  | _ ->
-      false
+  (* | _ ->
+   *     false *)
 
 
 module CriticalPair = struct
@@ -502,10 +502,10 @@ module CriticalPair = struct
 
   let make ~loc acquisitions event thread = make {acquisitions; event; thread} loc
 
-  let is_blocking_call {elem= {event}} = match event with LockAcquire _ -> true | _ -> false
+  let is_blocking_call {elem= {event}} = match event with LockAcquire _ -> true (* | _ -> false *)
 
   let get_final_acquire {elem= {event}} =
-    match event with LockAcquire lock -> Some lock | _ -> None
+    match event with LockAcquire lock -> Some lock (* | _ -> None *)
 
 
   let may_deadlock tenv ({elem= pair1} as t1 : t) ({elem= pair2} as t2 : t) =
@@ -958,15 +958,22 @@ let widen ~prev ~next ~num_iters =
     in
     {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
 
-let acquire ?tenv ({lock_state; critical_pairs} as astate) ~procname ~loc locks = astate
-  (* { astate with
-   *   critical_pairs=
-   *     List.fold locks ~init:critical_pairs ~f:(fun acc lock ->
-   *         let event = Event.make_acquire lock in
-   *         add_critical_pair ?tenv lock_state event astate.thread ~loc acc )
-   * ; lock_state=
-   *     List.fold locks ~init:lock_state ~f:(fun acc lock -> LockState.acquire ~procname ~loc lock acc)
-   * } *)
+let add_critical_pair ?tenv lock_state event thread ~loc acc =
+  if should_skip ?tenv event lock_state then acc
+  else
+    let acquisitions = LockState.get_acquisitions lock_state in
+    let critical_pair = CriticalPair.make ~loc acquisitions event thread in
+    CriticalPairs.add critical_pair acc
+
+let acquire ?tenv ({lock_state; critical_pairs} as astate) ~procname ~loc locks = (* astate *)
+  { astate with
+    critical_pairs=
+      List.fold locks ~init:critical_pairs ~f:(fun acc lock ->
+          let event = Event.make_acquire lock in
+          add_critical_pair ?tenv lock_state event astate.threads ~loc acc )
+  ; lock_state=
+      List.fold locks ~init:lock_state ~f:(fun acc lock -> LockState.acquire ~procname ~loc lock acc)
+  }
 
 
 let release ({lock_state} as astate) locks =

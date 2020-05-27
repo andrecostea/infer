@@ -56,7 +56,7 @@ end
 module Event : sig
   type t =
     | LockAcquire of Lock.t
-    | MonitorWait of Lock.t
+    (* | MonitorWait of Lock.t *)
   [@@deriving compare]
 
   val describe : F.formatter -> t -> unit

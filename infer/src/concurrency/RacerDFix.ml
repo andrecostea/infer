@@ -539,7 +539,7 @@ let analyze_procedure {Callbacks.exe_env; summary} =
           (* if method is [synchronized] released the lock once. *)
           if Procdesc.is_java_synchronized proc_desc then LockDomain.release_lock locks else locks
         in
-        let critical_pairs = CriticalPairs.bottom in (* TODO-ANDREEA: get some meaningful info here *)
+        (* let critical_pairs = CriticalPairs.bottom in *) (* TODO-ANDREEA: get some meaningful info here *)
         let post = {threads; locks; critical_pairs; accesses; return_ownership; return_attribute} in
         Payload.update_summary post summary
     | None ->
