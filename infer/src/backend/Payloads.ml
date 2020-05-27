@@ -21,6 +21,7 @@ type t =
   ; purity: PurityDomain.summary option
   ; quandary: QuandarySummary.t option
   ; racerd: RacerDDomain.summary option
+  ; racerdfix: RacerDFixDomain.summary option
   ; siof: SiofDomain.Summary.t option
   ; starvation: StarvationDomain.summary option
   ; nullsafe: NullsafeSummary.t option
@@ -46,6 +47,7 @@ let fields =
     ~purity:(fun f -> mk f "Purity" PurityDomain.pp_summary)
     ~quandary:(fun f -> mk f "Quandary" QuandarySummary.pp)
     ~racerd:(fun f -> mk f "RacerD" RacerDDomain.pp_summary)
+    ~racerdfix:(fun f -> mk f "RacerDFix" RacerDFixDomain.pp_summary)
     ~lab_resource_leaks:(fun f -> mk f "Resource Leaks Lab" ResourceLeakDomain.pp)
     ~siof:(fun f -> mk f "Siof" SiofDomain.Summary.pp)
     ~starvation:(fun f -> mk f "Starvation" StarvationDomain.pp_summary)
@@ -72,6 +74,7 @@ let empty =
   ; purity= None
   ; quandary= None
   ; racerd= None
+  ; racerdfix= None
   ; siof= None
   ; starvation= None
   ; nullsafe= None

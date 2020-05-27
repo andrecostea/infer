@@ -25,6 +25,7 @@ include sig
     ; purity: PurityDomain.summary option
     ; quandary: QuandarySummary.t option
     ; racerd: RacerDDomain.summary option
+    ; racerdfix: RacerDFixDomain.summary option
     ; siof: SiofDomain.Summary.t option
     ; starvation: StarvationDomain.summary option
     ; nullsafe: NullsafeSummary.t option

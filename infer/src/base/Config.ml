@@ -202,6 +202,8 @@ let property_attributes = "property_attributes"
 
 let racerd_issues_dir_name = "racerd"
 
+let racerdfix_issues_dir_name = "racerdfix"
+
 let report_condition_always_true_in_clang = false
 
 let report_html_dir = "report.html"

@@ -28,6 +28,7 @@ type t =
   | Purity
   | Quandary
   | RacerD
+  | RacerDFix
   | ResourceLeak
   | SIOF
   | SelfInBlock
@@ -213,6 +214,13 @@ let config checker =
       ; cli_flag= "racerd"
       ; enabled_by_default= true
       ; cli_deprecated_flags= ["-threadsafety"] }
+  | RacerDFix ->
+      { support= supports_clang_and_java
+      ; short_documentation= "the RacerD thread safety fix"
+      ; show_in_help= true
+      ; cli_flag= "racerdfix"
+      ; enabled_by_default= false
+      ; cli_deprecated_flags= [] }
   | ResourceLeak ->
       { support= (fun _ -> ToySupport)
       ; short_documentation= ""

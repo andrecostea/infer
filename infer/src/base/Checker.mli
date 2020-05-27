@@ -28,6 +28,7 @@ type t =
   | Purity
   | Quandary
   | RacerD
+  | RacerDFix
   | ResourceLeak
   | SIOF
   | SelfInBlock

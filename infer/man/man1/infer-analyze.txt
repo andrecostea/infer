@@ -263,6 +263,10 @@ OPTIONS
            Activates: Enable --racerd and disable all other checkers
            (Conversely: --no-racerd-only)
 
+       --racerdfix-only
+           Activates: Enable --racerdfix and disable all other checkers
+           (Conversely: --no-racerdfix-only)
+
        --reactive,-r
            Activates: Reactive mode: the analysis starts from the files
            captured since the infer command started (Conversely:

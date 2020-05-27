@@ -910,6 +910,10 @@ OPTIONS
            Activates: Enable --racerd and disable all other checkers
            (Conversely: --no-racerd-only)           See also infer-analyze(1).
 
+       --racerdfix-only
+           Activates: Enable --racerdfix and disable all other checkers
+           (Conversely: --no-racerdfix-only)           See also infer-analyze(1).
+
        --racerd-unknown-returns-owned
            Activates: Assume that all methods without a CFG (including
            abstract methods) return owned objects (Conversely:

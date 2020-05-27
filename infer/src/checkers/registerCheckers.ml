@@ -104,6 +104,16 @@ let all_checkers =
         ; ( File {callback= RacerD.file_analysis; issue_dir= Config.racerd_issues_dir_name}
           , Language.Java ) ] }
     (* toy resource analysis to use in the infer lab, see the lab/ directory *)
+  ; { name= "RacerDFix"
+    ; active= Config.is_checker_enabled RacerDFix
+    ; callbacks=
+        [ (Procedure RacerDFix.analyze_procedure, Language.Clang)
+        ; (Procedure RacerDFix.analyze_procedure, Language.Java)
+        ; ( File {callback= RacerDFix.file_analysis; issue_dir= Config.racerdfix_issues_dir_name}
+          , Language.Clang )
+        ; ( File {callback= RacerDFix.file_analysis; issue_dir= Config.racerdfix_issues_dir_name}
+          , Language.Java ) ] }
+    (* toy resource analysis to use in the infer lab, see the lab/ directory *)
   ; { name= "resource leak"
     ; active= Config.is_checker_enabled ResourceLeak
     ; callbacks=
