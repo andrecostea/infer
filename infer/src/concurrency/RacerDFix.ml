@@ -25,7 +25,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   type extras = FormalMap.t
 
-  let add_access formals loc ~is_write_access locks threads ownership
+  let add_access formals loc ~is_write_access locks critical_pair threads ownership
       (proc_data : extras ProcData.t) access_domain exp =
     let open Domain in
     let rec add_field_accesses prefix_path acc = function
@@ -41,7 +41,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let is_write = List.is_empty access_list && is_write_access in
             let pre = OwnershipDomain.get_owned prefix_path ownership in
             let snapshot_opt =
-              AccessSnapshot.make_access formals prefix_path' ~is_write loc locks threads pre
+              AccessSnapshot.make_access formals prefix_path' ~is_write loc locks critical_pair threads pre
             in
             let access_acc' = AccessDomain.add_opt snapshot_opt acc in
             add_field_accesses prefix_path' access_acc' access_list
@@ -59,7 +59,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       let ownership_pre = OwnershipDomain.get_owned receiver_ap astate.ownership in
       let callee_access =
         AccessSnapshot.make_container_access formals receiver_ap ~is_write callee_pname callee_loc
-          astate.locks astate.threads ownership_pre
+          astate.locks (CriticalPairs.choose_opt astate.critical_pairs) astate.threads ownership_pre
       in
       let ownership =
         OwnershipDomain.add (AccessExpression.base ret_base) ownership_pre astate.ownership
@@ -68,11 +68,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       Some {astate with accesses; ownership}
 
 
-  let add_reads formals exps loc ({accesses; locks; threads; ownership} as astate : Domain.t)
+  let add_reads formals exps loc ({accesses; locks; critical_pairs; threads; ownership} as astate : Domain.t)
       proc_data =
+    let open Domain in
+    let critical_pair = CriticalPairs.choose_opt critical_pairs in (*TODO-ANDREEA*)
     let accesses' =
       List.fold exps ~init:accesses
-        ~f:(add_access formals loc ~is_write_access:false locks threads ownership proc_data)
+        ~f:(add_access formals loc ~is_write_access:false locks critical_pair threads ownership proc_data)
     in
     {astate with accesses= accesses'}
 
@@ -263,6 +265,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | Lock _ | GuardLock _ | GuardConstruct {acquire_now= true} ->
             { astate with
               locks= LockDomain.acquire_lock astate.locks
+            (* TODO-ANDREEA must acquire the lock here *)
             ; threads= update_for_lock_use astate.threads }
         | Unlock _ | GuardDestroy _ | GuardUnlock _ ->
             { astate with
@@ -338,7 +341,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       (astate : Domain.t) =
     let open Domain in
     let rhs_accesses =
-      add_access extras loc ~is_write_access:false astate.locks astate.threads astate.ownership
+      add_access extras loc ~is_write_access:false astate.locks (CriticalPairs.choose_opt astate.critical_pairs) astate.threads astate.ownership
         proc_data astate.accesses rhs_exp
     in
     let rhs_access_exprs = HilExp.get_access_exprs rhs_exp in
@@ -361,7 +364,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
            report spurious read/write races *)
         rhs_accesses
       else
-        add_access extras loc ~is_write_access:true astate.locks astate.threads astate.ownership
+        add_access extras loc ~is_write_access:true astate.locks (CriticalPairs.choose_opt astate.critical_pairs)
+          astate.threads astate.ownership
           proc_data rhs_accesses (HilExp.AccessExpression lhs_access_exp)
     in
     let ownership = OwnershipDomain.propagate_assignment lhs_access_exp rhs_exp astate.ownership in
@@ -389,7 +393,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           acc
     in
     let accesses =
-      add_access formals loc ~is_write_access:false astate.locks astate.threads astate.ownership
+      add_access formals loc ~is_write_access:false astate.locks
+        (* CriticalPair. *)
+        (CriticalPairs.choose_opt astate.critical_pairs) astate.threads astate.ownership
         proc_data astate.accesses assume_exp
     in
     let astate' =

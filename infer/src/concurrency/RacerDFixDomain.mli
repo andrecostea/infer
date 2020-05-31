@@ -196,6 +196,7 @@ module AccessSnapshot : sig
       { access: Access.t
       ; thread: ThreadsDomain.t
       ; lock: bool
+      ; critical_pair: CriticalPair.t option
       ; ownership_precondition: OwnershipAbstractValue.t }
   end
 
@@ -214,6 +215,7 @@ module AccessSnapshot : sig
     -> is_write:bool
     -> Location.t
     -> LockDomain.t
+    -> CriticalPair.t option
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
     -> t option
@@ -225,6 +227,7 @@ module AccessSnapshot : sig
     -> Procname.t
     -> Location.t
     -> LockDomain.t
+    -> CriticalPair.t option
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
     -> t option
