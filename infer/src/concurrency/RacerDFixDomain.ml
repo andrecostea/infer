@@ -499,6 +499,10 @@ let is_recursive_lock event tenv =
 module CriticalPair = struct
   include ExplicitTrace.MakeTraceElem (CriticalPairElement) (ExplicitTrace.DefaultCallPrinter)
 
+  let pp_opt fmt pair = match pair with 
+      | None   -> F.pp_print_string fmt "Emptyyy"
+      | Some p -> pp fmt p
+
   let make ~loc acquisitions event thread = make {acquisitions; event; thread} loc
 
   (* let is_blocking_call {elem= {event}} = match event with LockAcquire _ -> true (\* | _ -> false *\) *)
@@ -638,7 +642,10 @@ module CriticalPairs = struct
         |> Option.fold ~init:acc ~f:(fun acc (new_pair : CriticalPair.t) ->
                if should_skip ?tenv new_pair.elem.event lock_state then acc else add new_pair acc )
         )
-      astate empty
+        astate empty
+
+  (* let merge critical_pairs = () *)
+
 end
 
 module FlatLock = AbstractDomain.Flat (Lock)
@@ -908,6 +915,12 @@ type t =
   ; ownership: OwnershipDomain.t
   ; attribute_map: AttributeMapDomain.t }
 
+
+let pp fmt {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map} =
+  F.fprintf fmt "Threads: %a, Locks: %a Lock State: %a Critical Pairs: %a @\nAccesses %a @\nOwnership: %a @\nAttributes: %a @\n"
+    ThreadsDomain.pp threads LockDomain.pp locks LockState.pp lock_state CriticalPairs.pp critical_pairs AccessDomain.pp accesses OwnershipDomain.pp
+    ownership AttributeMapDomain.pp attribute_map
+
 let bottom =
   let threads = ThreadsDomain.bottom in
   let locks = LockDomain.bottom in
@@ -920,12 +933,14 @@ let bottom =
 
 
 let is_bottom {threads; locks; accesses; ownership; attribute_map} =
+    let () = print_endline "\n ANDREEA is_botoom: " in
   ThreadsDomain.is_bottom threads && LockDomain.is_bottom locks && AccessDomain.is_empty accesses
   && OwnershipDomain.is_empty ownership
   && AttributeMapDomain.is_empty attribute_map
 
 
 let leq ~lhs ~rhs =
+  let () = print_endline "\n ANDREEA leq: " in
   if phys_equal lhs rhs then true
   else
     ThreadsDomain.leq ~lhs:lhs.threads ~rhs:rhs.threads
@@ -935,6 +950,11 @@ let leq ~lhs ~rhs =
 
 
 let join astate1 astate2 =
+  let () = print_endline "\n ANDREEA (join: astate1): " in
+  let () = pp Format.std_formatter astate1 in
+  let () = print_endline "\n ANDREEA (join: astate2): " in
+  let () = pp Format.std_formatter astate2 in
+  let astate =
   if phys_equal astate1 astate2 then astate1
   else
     let threads = ThreadsDomain.join astate1.threads astate2.threads in
@@ -945,9 +965,17 @@ let join astate1 astate2 =
     let ownership = OwnershipDomain.join astate1.ownership astate2.ownership in
     let attribute_map = AttributeMapDomain.join astate1.attribute_map astate2.attribute_map in
     {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
-
+  in
+  let () = print_endline "\n ANDREEA (join: astate): " in
+  let () = pp Format.std_formatter astate in
+  astate
 
 let widen ~prev ~next ~num_iters =
+  let () = print_endline "\n ANDREEA (widen: prev): " in
+  let () = pp Format.std_formatter prev in
+  let () = print_endline "\n ANDREEA (widen: next): " in
+  let () = pp Format.std_formatter next in
+  let astate = 
   if phys_equal prev next then prev
   else
     let threads = ThreadsDomain.widen ~prev:prev.threads ~next:next.threads ~num_iters in
@@ -960,6 +988,10 @@ let widen ~prev ~next ~num_iters =
       AttributeMapDomain.widen ~prev:prev.attribute_map ~next:next.attribute_map ~num_iters
     in
     {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
+  in
+  let () = print_endline "\n ANDREEA (join: astate): " in
+  let () = pp Format.std_formatter astate in
+  astate
 
 let add_critical_pair ?tenv lock_state event thread ~loc acc =
   if should_skip ?tenv event lock_state then acc
@@ -1007,12 +1039,6 @@ let pp_summary fmt {threads; locks; critical_pairs; accesses; return_ownership; 
     return_ownership Attribute.pp return_attribute
 
 
-let pp fmt {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map} =
-  F.fprintf fmt "Threads: %a, Locks: %a Lock State: %a Critical Pairs: %a @\nAccesses %a @\nOwnership: %a @\nAttributes: %a @\n"
-    ThreadsDomain.pp threads LockDomain.pp locks LockState.pp lock_state CriticalPairs.pp critical_pairs AccessDomain.pp accesses OwnershipDomain.pp
-    ownership AttributeMapDomain.pp attribute_map
-
-
 let add_unannotated_call_access formals pname actuals loc (astate : t) =
   match actuals with
   | [] ->
@@ -1030,5 +1056,9 @@ let add_unannotated_call_access formals pname actuals loc (astate : t) =
         in
         {astate with accesses= AccessDomain.add_opt snapshot astate.accesses} )
 
-let with_callsite astate ?tenv ?subst lock_state call_site thread =
-  CriticalPairs.with_callsite astate ?tenv ?subst lock_state call_site thread
+let with_callsite critical_pairs ?tenv ?subst lock_state call_site thread =
+  CriticalPairs.with_callsite critical_pairs ?tenv ?subst lock_state call_site thread
+
+let pp_pair_opt fmt pair = match pair with 
+      | None   -> F.pp_print_string fmt "Empty"
+      | Some p -> CriticalPair.pp fmt p

@@ -162,6 +162,8 @@ module CriticalPair : sig
 
   include PrettyPrintable.PrintableOrderedType with type t := t
 
+  val pp_opt : F.formatter -> t option -> unit
+
   val get_loc : t -> Location.t
   (** outermost callsite location *)
 
@@ -329,3 +331,5 @@ val release : t -> Lock.t list -> t
 (** simultaneously release a number of locks, no-op if list is empty *)
 
 val with_callsite : CriticalPairs.t -> ?tenv:Tenv.t -> ?subst:AbstractAddress.subst -> LockState.t -> CallSite.t -> ThreadsDomain.t -> CriticalPairs.t
+
+val pp_pair_opt : F.formatter -> CriticalPair.t option -> unit

@@ -54,12 +54,19 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let make_container_access formals ret_base callee_pname ~is_write receiver_ap callee_loc tenv
       (astate : Domain.t) =
     let open Domain in
+
     if RacerDFixModels.is_synchronized_container callee_pname receiver_ap tenv then None
     else
       let ownership_pre = OwnershipDomain.get_owned receiver_ap astate.ownership in
+      let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
+      let () = print_endline "\n =========================================\n ANDREEA (make_container_access): cp " in
+      let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+      let () = print_string "\n locks: " in
+      let () = LockDomain.pp  Format.std_formatter astate.locks in
+       let () = print_endline " " in
       let callee_access =
         AccessSnapshot.make_container_access formals receiver_ap ~is_write callee_pname callee_loc
-          astate.locks (CriticalPairs.choose_opt astate.critical_pairs) astate.threads ownership_pre
+          astate.locks critical_pair astate.threads ownership_pre
       in
       let ownership =
         OwnershipDomain.add (AccessExpression.base ret_base) ownership_pre astate.ownership
@@ -71,7 +78,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let add_reads formals exps loc ({accesses; locks; critical_pairs; threads; ownership} as astate : Domain.t)
       proc_data =
     let open Domain in
-    let critical_pair = CriticalPairs.choose_opt critical_pairs in (*TODO-ANDREEA*)
+    let () = print_endline "\n ANDREEA (read): " in
+    let () = CriticalPairs.pp Format.std_formatter critical_pairs in
+    let () = print_endline "\nLocks: " in
+    let () = LockDomain.pp Format.std_formatter locks in
+    let () = print_endline " " in
+    let critical_pair = (CriticalPairs.choose_opt critical_pairs) in
+    let () = print_endline "\n =========================================\n ANDREEA (add_reads): cp " in
+    let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+    let () = print_string "\n locks: " in
+    let () = LockDomain.pp  Format.std_formatter locks in
+    let () = print_endline " " in
     let accesses' =
       List.fold exps ~init:accesses
         ~f:(add_access formals loc ~is_write_access:false locks critical_pair threads ownership proc_data)
@@ -114,7 +131,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       AccessDomain.fold add accesses AccessDomain.empty
 
 
-  let add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks threads actuals
+  let add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks critical_pairs threads actuals
       callee_pname loc =
     let open Domain in
     let callsite = CallSite.make callee_pname loc in
@@ -145,6 +162,18 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       AccessDomain.add_opt snapshot_opt acc
     in
     AccessDomain.fold update_callee_access callee_accesses caller_astate.accesses
+
+  let add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks  critical_pairs threads actuals
+      callee_pname loc =
+    let () = print_endline "\n =========================================\n ANDREEA (add_callee_accesses): " in
+    let () = Domain.pp  Format.std_formatter caller_astate in
+    let () = print_string "callee accesses: \n" in
+    let () = Domain.AccessDomain.pp Format.std_formatter callee_accesses in
+    let () = print_string "output: \n" in
+    let new_astate = add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks  critical_pairs threads actuals
+      callee_pname loc in
+    let () = Domain.AccessDomain.pp Format.std_formatter new_astate in
+    new_astate
 
 
   let call_without_summary callee_pname ret_base call_flags actuals astate =
@@ -262,12 +291,33 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               ThreadsDomain.AnyThread
         in
         match get_lock_effect callee_pname actuals with
-        | Lock _ | GuardLock _ | GuardConstruct {acquire_now= true} ->
+        | Lock locks ->
+            let open RacerDFixDomain in
+            let get_lock_path = Domain.Lock.make extras in
+            let proc_name = Summary.get_proc_name summary in
+            let do_lock locks  =
+              List.filter_map ~f:get_lock_path locks (* |> Domain.acquire ~tenv astate ~procname:proc_name ~loc *)
+            in
+            let locks = do_lock locks in
+            let astate = acquire ~tenv astate ~procname:proc_name ~loc locks in
+            { astate with
+              locks= LockDomain.acquire_lock astate.locks
+            ; threads= update_for_lock_use astate.threads }
+        | GuardLock _ | GuardConstruct {acquire_now= true} ->
             { astate with
               locks= LockDomain.acquire_lock astate.locks
             (* TODO-ANDREEA must acquire the lock here *)
             ; threads= update_for_lock_use astate.threads }
-        | Unlock _ | GuardDestroy _ | GuardUnlock _ ->
+        | Unlock locks ->
+            let open RacerDFixDomain in
+            let get_lock_path = Domain.Lock.make extras in
+            let do_unlock locks (* astate *) = List.filter_map ~f:get_lock_path locks (* |> Domain.release astate *) in
+            let locks = do_unlock locks in
+            let astate = release astate locks in
+            { astate with
+              locks= LockDomain.release_lock astate.locks
+            ; threads= update_for_lock_use astate.threads }
+        | GuardDestroy _ | GuardUnlock _ ->
             { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads }
@@ -303,7 +353,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                   CriticalPairs.join astate.critical_pairs critical_pairs'
                 in
                 let accesses =
-                  add_callee_accesses extras astate accesses locks threads actuals callee_pname loc
+                  add_callee_accesses extras astate accesses locks critical_pairs threads actuals callee_pname loc
                 in
                 let ownership =
                   OwnershipDomain.propagate_return ret_access_exp return_ownership actuals
@@ -340,8 +390,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let do_assignment lhs_access_exp rhs_exp loc ({ProcData.tenv; extras} as proc_data)
       (astate : Domain.t) =
     let open Domain in
+    let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
+    let () = print_endline "\n =========================================\n ANDREEA (do_assignment): cp " in
+    let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+    let () = print_string "\n locks :" in
+    let () = LockDomain.pp Format.std_formatter astate.locks in
+     let () = print_endline " " in
     let rhs_accesses =
-      add_access extras loc ~is_write_access:false astate.locks (CriticalPairs.choose_opt astate.critical_pairs) astate.threads astate.ownership
+      add_access extras loc ~is_write_access:false astate.locks critical_pair astate.threads astate.ownership
         proc_data astate.accesses rhs_exp
     in
     let rhs_access_exprs = HilExp.get_access_exprs rhs_exp in
@@ -364,7 +420,13 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
            report spurious read/write races *)
         rhs_accesses
       else
-        add_access extras loc ~is_write_access:true astate.locks (CriticalPairs.choose_opt astate.critical_pairs)
+        let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
+        let () = print_endline "\n =========================================\n ANDREEA (do_assignment 2): cp " in
+        let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+        let () = print_string "\n locks: " in
+        let () = LockDomain.pp Format.std_formatter astate.locks in
+         let () = print_endline " " in
+        add_access extras loc ~is_write_access:true astate.locks critical_pair
           astate.threads astate.ownership
           proc_data rhs_accesses (HilExp.AccessExpression lhs_access_exp)
     in
@@ -392,10 +454,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | Attribute.(Functional | Nothing) ->
           acc
     in
+    let () = print_endline "\n ANDREEA (do_assume): " in
+    let () = pp Format.std_formatter astate in
+    let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
+    let () = print_endline "\n =========================================\n ANDREEA (do_assume): cp " in
+    let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+    let () = print_string "\n locks: " in
+    let () = LockDomain.pp Format.std_formatter astate.locks in
+     let () = print_endline " " in
     let accesses =
       add_access formals loc ~is_write_access:false astate.locks
-        (* CriticalPair. *)
-        (CriticalPairs.choose_opt astate.critical_pairs) astate.threads astate.ownership
+        critical_pair astate.threads astate.ownership
         proc_data astate.accesses assume_exp
     in
     let astate' =
