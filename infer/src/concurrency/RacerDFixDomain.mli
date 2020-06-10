@@ -198,6 +198,7 @@ module AccessSnapshot : sig
       { access: Access.t
       ; thread: ThreadsDomain.t
       ; lock: bool
+      ; locks: Acquisitions.t 
       ; critical_pair: CriticalPair.t option
       ; ownership_precondition: OwnershipAbstractValue.t }
   end
@@ -217,6 +218,7 @@ module AccessSnapshot : sig
     -> is_write:bool
     -> Location.t
     -> LockDomain.t
+    -> Acquisitions.t
     -> CriticalPair.t option
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
@@ -229,6 +231,7 @@ module AccessSnapshot : sig
     -> Procname.t
     -> Location.t
     -> LockDomain.t
+    -> LockState.t
     -> CriticalPair.t option
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
@@ -246,6 +249,8 @@ module AccessSnapshot : sig
     -> OwnershipAbstractValue.t
     -> ThreadsDomain.t
     -> LockDomain.t
+    -> LockState.t
+    -> CriticalPair.t option
     -> t option
 end
 
@@ -333,3 +338,7 @@ val release : t -> Lock.t list -> t
 val with_callsite : CriticalPairs.t -> ?tenv:Tenv.t -> ?subst:AbstractAddress.subst -> LockState.t -> CallSite.t -> ThreadsDomain.t -> CriticalPairs.t
 
 val pp_pair_opt : F.formatter -> CriticalPair.t option -> unit
+
+val get_acquisitions : LockState.t -> Acquisitions.t
+
+val different_locks : Acquisitions.t -> Acquisitions.t -> bool

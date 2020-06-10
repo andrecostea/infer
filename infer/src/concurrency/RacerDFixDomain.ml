@@ -292,7 +292,8 @@ end = struct
 
   (* [acquisitions] has the currently held locks, so as to avoid a linear fold in [get_acquisitions].
      This should also increase sharing across returned values from [get_acquisitions]. *)
-  type t = {map: Map.t; acquisitions: Acquisitions.t}
+  type t = {map: Map.t [@compare.ignore]; acquisitions: Acquisitions.t}
+  [@@deriving compare]
 
   let get_acquisitions {acquisitions} = acquisitions
 
@@ -711,17 +712,20 @@ module AccessSnapshot = struct
       { access: Access.t
       ; thread: ThreadsDomain.t
       ; lock: bool
+      ; locks: Acquisitions.t
       ; critical_pair: CriticalPair.t option
       ; ownership_precondition: OwnershipAbstractValue.t }
     [@@deriving compare]
 
-    let pp_critical_pair fmt pair = match pair with
-      | None -> F.pp_print_string fmt "Empty"
-      | Some p -> CriticalPair.pp fmt p
+    (* let pp_critical_pair fmt pair = match pair with
+     *   | None -> F.pp_print_string fmt "Empty"
+     *   | Some p -> CriticalPair.pp fmt p *)
 
-    let pp fmt {access; thread; lock; critical_pair; ownership_precondition} =
-      F.fprintf fmt "Access: %a Thread: %a Lock: %b Critical Pair: %a Pre: %a" Access.pp access ThreadsDomain.pp
-        thread lock pp_critical_pair critical_pair OwnershipAbstractValue.pp ownership_precondition
+    let pp fmt {access; thread; lock; locks;  ownership_precondition} =
+      F.fprintf fmt "Access: %a Thread: %a Lock: %b Acquisitions: %a Pre: %a" Access.pp access ThreadsDomain.pp
+        thread lock
+        Acquisitions.pp locks
+        OwnershipAbstractValue.pp ownership_precondition
 
     let describe fmt {access} = Access.describe fmt access
   end
@@ -740,40 +744,43 @@ module AccessSnapshot = struct
     else None
 
 
-  let make_if_not_owned formals access lock critical_pair thread ownership_precondition loc =
-    make {access; lock; critical_pair; thread; ownership_precondition} loc |> filter formals
+  let make_if_not_owned formals access lock locks critical_pair thread ownership_precondition loc =
+    make {access; lock; locks; critical_pair; thread; ownership_precondition} loc |> filter formals
 
 
-  let make_unannotated_call_access formals exp pname lock critical_pair ownership loc =
+  let make_unannotated_call_access formals exp pname lock locks critical_pair ownership loc =
     let lock = LockDomain.is_locked lock in
     let access = Access.make_unannotated_call_access exp pname in
-    make_if_not_owned formals access lock critical_pair ownership loc
+    make_if_not_owned formals access lock locks critical_pair ownership loc
 
 
-  let make_access formals acc_exp ~is_write loc lock critical_pair thread ownership_precondition =
+  let make_access formals acc_exp ~is_write loc lock locks critical_pair thread ownership_precondition =
     let lock = LockDomain.is_locked lock in
     let access = Access.make_field_access acc_exp ~is_write in
-    make_if_not_owned formals access lock critical_pair thread ownership_precondition loc
+    make_if_not_owned formals access lock locks critical_pair thread ownership_precondition loc
 
 
-  let make_container_access formals acc_exp ~is_write callee loc lock critical_pair thread ownership_precondition
+  let make_container_access formals acc_exp ~is_write callee loc lock lock_state critical_pair thread ownership_precondition
       =
     let lock = LockDomain.is_locked lock in
     let access = Access.make_container_access acc_exp callee ~is_write in
-    make_if_not_owned formals access lock critical_pair thread ownership_precondition loc
+    let locks = LockState.get_acquisitions lock_state in
+    make_if_not_owned formals access lock locks critical_pair thread ownership_precondition loc
 
 
   let map_opt formals ~f t =
     map t ~f:(fun elem -> {elem with access= Access.map ~f elem.access}) |> filter formals
 
 
-  let update_callee_access formals snapshot callsite ownership_precondition threads locks =
+  let update_callee_access formals snapshot callsite ownership_precondition threads lock lock_state critical_pair =
     let thread =
       ThreadsDomain.integrate_summary ~callee_astate:snapshot.elem.thread ~caller_astate:threads
     in
-    let lock = snapshot.elem.lock || LockDomain.is_locked locks in
+    let lock = snapshot.elem.lock || LockDomain.is_locked lock in
+    let locks = LockState.get_acquisitions lock_state in
+    (* ANDREEA-TODO: join critical_pairs*)
     with_callsite snapshot callsite
-    |> map ~f:(fun elem -> {elem with lock; thread; ownership_precondition})
+    |> map ~f:(fun elem -> {elem with lock; thread; locks; critical_pair; ownership_precondition})
     |> filter formals
 
 
@@ -781,6 +788,9 @@ module AccessSnapshot = struct
     (not (ThreadsDomain.is_any_but_self thread))
     && (not lock)
     && not (OwnershipAbstractValue.is_owned ownership_precondition)
+
+  (* let common_locks locks1 locks2 =
+   *   if  *)
 end
 
 module AccessDomain = struct
@@ -916,9 +926,9 @@ type t =
   ; attribute_map: AttributeMapDomain.t }
 
 
-let pp fmt {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map} =
-  F.fprintf fmt "Threads: %a, Locks: %a Lock State: %a Critical Pairs: %a @\nAccesses %a @\nOwnership: %a @\nAttributes: %a @\n"
-    ThreadsDomain.pp threads LockDomain.pp locks LockState.pp lock_state CriticalPairs.pp critical_pairs AccessDomain.pp accesses OwnershipDomain.pp
+let pp fmt {threads; locks; lock_state;  accesses; ownership; attribute_map} =
+  F.fprintf fmt "Threads: %a, Locks: %a Lock State: %a  @\nAccesses %a @\nOwnership: %a @\nAttributes: %a @\n"
+    ThreadsDomain.pp threads LockDomain.pp locks LockState.pp lock_state AccessDomain.pp accesses OwnershipDomain.pp
     ownership AttributeMapDomain.pp attribute_map
 
 let bottom =
@@ -932,11 +942,12 @@ let bottom =
   {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
 
 
-let is_bottom {threads; locks; accesses; ownership; attribute_map} =
+let is_bottom {threads; locks; lock_state; accesses; ownership; attribute_map} =
     let () = print_endline "\n ANDREEA is_botoom: " in
-  ThreadsDomain.is_bottom threads && LockDomain.is_bottom locks && AccessDomain.is_empty accesses
-  && OwnershipDomain.is_empty ownership
-  && AttributeMapDomain.is_empty attribute_map
+    ThreadsDomain.is_bottom threads && LockDomain.is_bottom locks && AccessDomain.is_empty accesses
+    && LockState.is_top lock_state
+    && OwnershipDomain.is_empty ownership
+    && AttributeMapDomain.is_empty attribute_map
 
 
 let leq ~lhs ~rhs =
@@ -945,6 +956,7 @@ let leq ~lhs ~rhs =
   else
     ThreadsDomain.leq ~lhs:lhs.threads ~rhs:rhs.threads
     && LockDomain.leq ~lhs:lhs.locks ~rhs:rhs.locks
+    && LockState.leq ~lhs:lhs.lock_state ~rhs:rhs.lock_state
     && AccessDomain.leq ~lhs:lhs.accesses ~rhs:rhs.accesses
     && AttributeMapDomain.leq ~lhs:lhs.attribute_map ~rhs:rhs.attribute_map
 
@@ -1010,10 +1022,32 @@ let acquire ?tenv ({lock_state; critical_pairs} as astate) ~procname ~loc locks 
       List.fold locks ~init:lock_state ~f:(fun acc lock -> LockState.acquire ~procname ~loc lock acc)
   }
 
+let acquire ?tenv astate ~procname ~loc locks = (* astate *)
+  let result = acquire ?tenv astate ~procname ~loc locks in
+  let () = if true then
+    let () = print_endline "\n ACQUIRE astate: \n" in
+    let () = pp Format.std_formatter astate in
+    let () = print_endline "\n ACQUIRE result: \n" in
+    let () = pp Format.std_formatter result in
+    ()
+  in result
 
 let release ({lock_state} as astate) locks =
   { astate with
     lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release l acc) }
+
+let release astate locks =
+  let result = release astate locks in
+  let () = if true then
+      let () = print_endline "\n RELEASE locks: \n" in
+      let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
+      let () = print_endline "\n RELEASE astate: \n" in
+      let () = pp Format.std_formatter astate in
+      let () = print_endline "\n RELEASE result: \n" in
+      let () = pp Format.std_formatter result in
+      ()
+  in result
+
 
 type summary =
   { threads: ThreadsDomain.t
@@ -1051,6 +1085,7 @@ let add_unannotated_call_access formals pname actuals loc (astate : t) =
     | [receiver] ->
         let snapshot =
           AccessSnapshot.make_unannotated_call_access formals receiver pname astate.locks
+            (LockState.get_acquisitions astate.lock_state)
             (CriticalPairs.choose_opt astate.critical_pairs) (* astate.critical_pairs TODO-Andreea: needs something meaningful here. Perhaps a flattened critical_pairs? *)
             astate.threads Unowned loc
         in
@@ -1062,3 +1097,8 @@ let with_callsite critical_pairs ?tenv ?subst lock_state call_site thread =
 let pp_pair_opt fmt pair = match pair with 
       | None   -> F.pp_print_string fmt "Empty"
       | Some p -> CriticalPair.pp fmt p
+
+let get_acquisitions lock_state = LockState.get_acquisitions lock_state
+
+let different_locks acqs1 acqs2 =
+  Acquisitions.disjoint acqs1 acqs2
