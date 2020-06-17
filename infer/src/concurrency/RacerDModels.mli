@@ -7,9 +7,9 @@
 
 open! IStd
 
-type container_access = ContainerRead | ContainerWrite
+val is_container_read : Tenv.t -> Procname.t -> bool
 
-val get_container_access : Procname.t -> Tenv.t -> container_access option
+val is_container_write : Tenv.t -> Procname.t -> bool
 (** return Some (access) if this procedure accesses the contents of a container (e.g., Map.get) *)
 
 val has_return_annot : (Annot.Item.t -> bool) -> Procname.t -> bool
@@ -53,11 +53,10 @@ val should_flag_interface_call : Tenv.t -> HilExp.t list -> CallFlags.t -> Procn
 val is_synchronized_container : Procname.t -> HilExp.AccessExpression.t -> Tenv.t -> bool
 (** is a call on an access expression to a method of a synchronized container? *)
 
-val is_abstract_getthis_like : Procname.t -> bool
-(** is the callee an abstract method with one argument where argument type is equal to return type *)
+val is_initializer : Tenv.t -> Procname.t -> bool
+(** should the given procedure be treated as a constructor/initializer? *)
 
-val creates_builder : Procname.t -> bool
-(** is the callee a static java method returning a [Builder] object? *)
+val is_synchronized_container_constructor : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
-val is_builder_passthrough : Procname.t -> bool
-(** is the callee a non-static [Builder] method returning the same type as its receiver *)
+val is_converter_to_synchronized_container : Tenv.t -> Procname.t -> HilExp.t list -> bool
+(** is the given [procname] a method that wraps a container into a thread-safe wrapper? *)

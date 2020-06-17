@@ -17,7 +17,7 @@ DEPENDENCIES_DIR="$INFER_ROOT/facebook/dependencies"
 PLATFORM="$(uname)"
 SANDCASTLE=${SANDCASTLE:-}
 NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
-INFER_OPAM_DEFAULT_SWITCH="ocaml-variants.4.08.1+flambda"
+INFER_OPAM_DEFAULT_SWITCH="ocaml-variants.4.09.1+flambda"
 INFER_OPAM_DEFAULT_COMPILER="$INFER_OPAM_DEFAULT_SWITCH"
 INFER_OPAM_SWITCH=${INFER_OPAM_SWITCH:-$INFER_OPAM_DEFAULT_SWITCH}
 INFER_OPAM_COMPILER=${INFER_OPAM_COMPILER:-$INFER_OPAM_DEFAULT_COMPILER}
@@ -55,7 +55,7 @@ USER_OPAM_SWITCH=no
 
 ORIG_ARGS="$*"
 
-while [[ $# > 0 ]]; do
+while [[ $# -gt 0 ]]; do
   opt_key="$1"
   case $opt_key in
     all)

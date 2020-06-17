@@ -93,21 +93,6 @@ let proc_names_of_source source =
       |> Option.value_map ~default:[] ~f:Procname.SQLiteList.deserialize )
 
 
-let exists_source_statement =
-  ResultsDatabase.register_statement "SELECT 1 FROM source_files WHERE source_file = :k"
-
-
-let is_captured source =
-  ResultsDatabase.with_registered_statement exists_source_statement ~f:(fun db exists_stmt ->
-      SourceFile.SQLite.serialize source
-      |> Sqlite3.bind exists_stmt 1
-      (* :k *)
-      |> SqliteUtils.check_result_code db ~log:"load captured source file" ;
-      SqliteUtils.result_single_column_option ~finalize:false ~log:"SourceFiles.is_captured" db
-        exists_stmt
-      |> Option.is_some )
-
-
 let is_non_empty_statement = ResultsDatabase.register_statement "SELECT 1 FROM source_files LIMIT 1"
 
 let is_empty () =
@@ -180,3 +165,14 @@ let pp_all ~filter ~type_environment ~procedure_names ~freshly_captured fmt () =
                ~log:"printing all source files")
       in
       F.fprintf fmt "@[<v>%a@]" pp_result stmt )
+
+
+let get_procs_in_file proc_name =
+  let source_file =
+    match Attributes.load proc_name with
+    | Some {ProcAttributes.translation_unit} ->
+        Some translation_unit
+    | None ->
+        None
+  in
+  Option.value_map source_file ~default:[] ~f:proc_names_of_source

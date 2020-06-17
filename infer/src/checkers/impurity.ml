@@ -49,7 +49,7 @@ let add_invalid_and_modified ~var ~access ~check_empty attrs acc : ImpurityDomai
   in
   let invalid_and_modified =
     match Attributes.get_invalid attrs with
-    | None | Some (PulseInvalidation.ConstantDereference _, _) ->
+    | None | Some (Invalidation.ConstantDereference _, _) ->
         modified
     | Some invalid ->
         ImpurityDomain.Invalid invalid :: modified
@@ -106,9 +106,8 @@ let get_modified_params pname post_stack pre_heap post formals =
       | Some (addr, _) when Typ.is_pointer typ -> (
         match BaseMemory.find_opt addr pre_heap with
         | Some edges_pre ->
-            BaseMemory.Edges.fold
-              (fun access (addr, _) acc -> add_to_modified ~var ~access ~addr pre_heap post acc)
-              edges_pre acc
+            BaseMemory.Edges.fold edges_pre ~init:acc ~f:(fun acc access (addr, _) ->
+                add_to_modified ~var ~access ~addr pre_heap post acc )
         | None ->
             debug "The address is not materialized in in pre-heap." ;
             acc )
@@ -138,50 +137,52 @@ let is_modeled_pure tenv pname =
 
 (** Given Pulse summary, extract impurity info, i.e. parameters and global variables that are
     modified by the function and skipped functions. *)
-let extract_impurity tenv pdesc (exec_state : PulseExecutionState.t) : ImpurityDomain.t =
-  match exec_state with
-  | ExitProgram astate | ContinueProgram astate ->
-      (* TODO: consider impure even though the program only exits with pre=post *)
-      let pre_heap = (PulseAbductiveDomain.get_pre astate).BaseDomain.heap in
-      let post = PulseAbductiveDomain.get_post astate in
-      let post_stack = post.BaseDomain.stack in
-      let pname = Procdesc.get_proc_name pdesc in
-      let modified_params =
-        Procdesc.get_formals pdesc |> get_modified_params pname post_stack pre_heap post
-      in
-      let modified_globals = get_modified_globals pre_heap post post_stack in
-      let skipped_calls =
-        PulseAbductiveDomain.get_skipped_calls astate
-        |> PulseAbductiveDomain.SkippedCalls.filter (fun proc_name _ ->
-               Purity.should_report proc_name && not (is_modeled_pure tenv proc_name) )
-      in
-      {modified_globals; modified_params; skipped_calls}
+let extract_impurity tenv pdesc (exec_state : ExecutionDomain.t) : ImpurityDomain.t =
+  let astate, exited =
+    match exec_state with
+    | ExitProgram astate ->
+        (astate, true)
+    | AbortProgram astate | ContinueProgram astate ->
+        (astate, false)
+  in
+  let pre_heap = (AbductiveDomain.get_pre astate).BaseDomain.heap in
+  let post = AbductiveDomain.get_post astate in
+  let post_stack = post.BaseDomain.stack in
+  let pname = Procdesc.get_proc_name pdesc in
+  let modified_params =
+    Procdesc.get_formals pdesc |> get_modified_params pname post_stack pre_heap post
+  in
+  let modified_globals = get_modified_globals pre_heap post post_stack in
+  let skipped_calls =
+    SkippedCalls.filter
+      (fun proc_name _ -> Purity.should_report proc_name && not (is_modeled_pure tenv proc_name))
+      astate.AbductiveDomain.skipped_calls
+  in
+  {modified_globals; modified_params; skipped_calls; exited}
 
 
-let checker {exe_env; Callbacks.summary} : Summary.t =
-  let proc_name = Summary.get_proc_name summary in
-  let pdesc = Summary.get_proc_desc summary in
-  let pname_loc = Procdesc.get_loc pdesc in
-  let tenv = Exe_env.get_tenv exe_env proc_name in
-  ( match summary.payloads.pulse with
+let checker {IntraproceduralAnalysis.proc_desc; tenv; err_log} pulse_summary_opt =
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  let pname_loc = Procdesc.get_loc proc_desc in
+  match pulse_summary_opt with
   | None ->
       let impure_fun_desc =
         F.asprintf "Impure function %a with no pulse summary" Procname.pp proc_name
       in
       let impure_fun_ltr = Errlog.make_trace_element 0 pname_loc impure_fun_desc [] in
-      Reporting.log_error summary ~loc:pname_loc ~ltr:[impure_fun_ltr] IssueType.impure_function
-        impure_fun_desc
+      Reporting.log_issue proc_desc err_log ~loc:pname_loc ~ltr:[impure_fun_ltr] Impurity
+        IssueType.impure_function impure_fun_desc
   | Some [] ->
       let impure_fun_desc =
         F.asprintf "Impure function %a with empty pulse summary" Procname.pp proc_name
       in
       let impure_fun_ltr = Errlog.make_trace_element 0 pname_loc impure_fun_desc [] in
-      Reporting.log_error summary ~loc:pname_loc ~ltr:[impure_fun_ltr] IssueType.impure_function
-        impure_fun_desc
+      Reporting.log_issue proc_desc err_log ~loc:pname_loc ~ltr:[impure_fun_ltr] Impurity
+        IssueType.impure_function impure_fun_desc
   | Some pre_posts ->
       let (ImpurityDomain.{modified_globals; modified_params; skipped_calls} as impurity_astate) =
         List.fold pre_posts ~init:ImpurityDomain.pure ~f:(fun acc exec_state ->
-            let modified = extract_impurity tenv pdesc exec_state in
+            let modified = extract_impurity tenv proc_desc exec_state in
             ImpurityDomain.join acc modified )
       in
       if Purity.should_report proc_name && not (ImpurityDomain.is_pure impurity_astate) then
@@ -191,9 +192,9 @@ let checker {exe_env; Callbacks.summary} : Summary.t =
             set acc
         in
         let skipped_functions =
-          PulseAbductiveDomain.SkippedCalls.fold
+          SkippedCalls.fold
             (fun proc_name trace acc ->
-              PulseTrace.add_to_errlog ~nesting:1 ~include_value_history:false
+              Trace.add_to_errlog ~nesting:1 ~include_value_history:false
                 ~pp_immediate:(fun fmt ->
                   F.fprintf fmt "call to skipped function %a occurs here" Procname.pp proc_name )
                 trace acc )
@@ -206,5 +207,5 @@ let checker {exe_env; Callbacks.summary} : Summary.t =
           :: modified_ltr Formal modified_params
                (modified_ltr Global modified_globals skipped_functions)
         in
-        Reporting.log_error summary ~loc:pname_loc ~ltr IssueType.impure_function impure_fun_desc ) ;
-  summary
+        Reporting.log_issue proc_desc err_log ~loc:pname_loc ~ltr Impurity IssueType.impure_function
+          impure_fun_desc

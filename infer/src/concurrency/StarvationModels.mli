@@ -26,12 +26,10 @@ val is_synchronized_library_call : Tenv.t -> Procname.t -> bool
 val should_skip_analysis : Tenv.t -> Procname.t -> HilExp.t list -> bool
 (** should we treat a method call as skip (eg library methods in guava) to avoid FPs? *)
 
-val is_annotated_nonblocking :
-  attrs_of_pname:(Procname.t -> ProcAttributes.t option) -> Tenv.t -> Procname.t -> bool
+val is_annotated_nonblocking : Tenv.t -> Procname.t -> bool
 (** is procedure transitively annotated [@Nonblocking] *)
 
-val is_annotated_lockless :
-  attrs_of_pname:(Procname.t -> ProcAttributes.t option) -> Tenv.t -> Procname.t -> bool
+val is_annotated_lockless : Tenv.t -> Procname.t -> bool
 (** is procedure transitively annotated [@Lockless] *)
 
 val schedules_work : Tenv.t -> Procname.t -> bool
@@ -51,18 +49,20 @@ val get_run_method_from_runnable : Tenv.t -> HilExp.AccessExpression.t -> Procna
 (** given a receiver, find the [run()] method in the appropriate class *)
 
 val get_returned_executor :
-     attrs_of_pname:(Procname.t -> ProcAttributes.t option)
-  -> Tenv.t
-  -> Procname.t
-  -> HilExp.t list
-  -> scheduler_thread_constraint option
+  Tenv.t -> Procname.t -> HilExp.t list -> scheduler_thread_constraint option
 (** does the function return an executor and of which thread? *)
 
-val schedules_work_on_ui_thread : Tenv.t -> Procname.t -> bool
-(** method call known to directly schedule work on UI thread *)
+val schedules_first_arg_on_ui_thread : Tenv.t -> Procname.t -> bool
+(** method call known to directly schedule the runnable object provided as first procedure argument
+    on the UI thread *)
 
-val schedules_work_on_bg_thread : Tenv.t -> Procname.t -> bool
-(** method call known to directly schedule work on BG thread *)
+val schedules_second_arg_on_ui_thread : Tenv.t -> Procname.t -> bool
+(** method call known to directly schedule the runnable object provided as second procedure argument
+    on a background thread *)
+
+val schedules_first_arg_on_bg_thread : Tenv.t -> Procname.t -> bool
+(** method call known to directly the runnable object provided as first procedure argument on a
+    background thread *)
 
 val is_getMainLooper : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
@@ -76,3 +76,6 @@ val is_future_is_done : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
 val is_assume_true : Tenv.t -> Procname.t -> HilExp.t list -> bool
 (** is the callee equivalent to assuming its first argument true *)
+
+val is_java_main_method : Procname.t -> bool
+(** does the method look like a Java [main] *)

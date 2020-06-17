@@ -12,7 +12,7 @@ let desc_retain_cycle tenv (cycle : RetainCyclesType.t) =
   Logging.d_strln "Proposition with retain cycle:" ;
   let do_edge index_ edge =
     let index = index_ + 1 in
-    let node = State.get_node_exn () in
+    let node = AnalysisState.get_node_exn () in
     let from_exp_str edge_obj =
       let type_str =
         let typ_str = Typ.to_string edge_obj.rc_from.rc_node_typ in
@@ -226,15 +226,17 @@ let exn_retain_cycle tenv cycle =
   let retain_cycle = desc_retain_cycle tenv cycle in
   let cycle_dotty = Format.asprintf "%a" RetainCyclesType.pp_dotty cycle in
   if Config.debug_mode then (
-    let rc_dotty_dir = Filename.concat Config.results_dir Config.retain_cycle_dotty_dir in
+    let rc_dotty_dir = ResultsDir.get_path RetainCycles in
     Utils.create_dir rc_dotty_dir ;
     let rc_dotty_file = Filename.temp_file ~in_dir:rc_dotty_dir "rc" ".dot" in
     RetainCyclesType.write_dotty_to_file rc_dotty_file cycle ) ;
-  let desc = Localise.desc_retain_cycle retain_cycle (State.get_loc_exn ()) (Some cycle_dotty) in
+  let desc =
+    Localise.desc_retain_cycle retain_cycle (AnalysisState.get_loc_exn ()) (Some cycle_dotty)
+  in
   Exceptions.Retain_cycle (desc, __POS__)
 
 
-let report_cycle tenv summary prop =
+let report_cycle {InterproceduralAnalysis.proc_desc; tenv; err_log} prop =
   (* When there is a cycle in objc we ignore it only if it's empty or it has weak or
      unsafe_unretained fields.  Otherwise we report a retain cycle. *)
   let cycles = get_retain_cycles tenv prop in
@@ -243,7 +245,7 @@ let report_cycle tenv summary prop =
     RetainCyclesType.Set.iter
       (fun cycle ->
         let exn = exn_retain_cycle tenv cycle in
-        Reporting.log_error_using_state summary exn )
+        BiabductionReporting.log_issue_using_state proc_desc err_log exn )
       cycles ;
     (* we report the retain cycles above but need to raise an exception as well to stop the analysis *)
-    raise (Exceptions.Dummy_exception (Localise.verbatim_desc "retain cycle found")) )
+    raise (Exceptions.Analysis_stops (Localise.verbatim_desc "retain cycle found", Some __POS__)) )

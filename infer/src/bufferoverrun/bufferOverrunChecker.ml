@@ -9,6 +9,7 @@
 
 open! IStd
 open! AbstractDomain.Types
+module BoSummary = BufferOverrunAnalysisSummary
 module BoUtils = BufferOverrunUtils
 module CFG = BufferOverrunAnalysis.CFG
 module Dom = BufferOverrunDomain
@@ -19,16 +20,11 @@ module PO = BufferOverrunProofObligations
 module Sem = BufferOverrunSemantics
 module Trace = BufferOverrunTrace
 
-module Payload = SummaryPayload.Make (struct
-  type t = BufferOverrunCheckerSummary.t
-
-  let field = Payloads.Fields.buffer_overrun_checker
-end)
-
 module UnusedBranch = struct
   type t = {node: CFG.Node.t; location: Location.t; condition: Exp.t; true_branch: bool}
 
-  let report tenv summary {node; location; condition; true_branch} =
+  let report {InterproceduralAnalysis.proc_desc; tenv; err_log}
+      {node; location; condition; true_branch} =
     let desc =
       let err_desc =
         let i = match condition with Exp.Const (Const.Cint i) -> i | _ -> IntLit.zero in
@@ -41,7 +37,7 @@ module UnusedBranch = struct
       if true_branch then IssueType.condition_always_false else IssueType.condition_always_true
     in
     let ltr = [Errlog.make_trace_element 0 location "Here" []] in
-    Reporting.log_warning summary ~loc:location ~ltr issue_type desc
+    Reporting.log_issue proc_desc err_log ~loc:location ~ltr BufferOverrunChecker issue_type desc
 end
 
 module UnusedBranches = struct
@@ -49,17 +45,17 @@ module UnusedBranches = struct
 
   let empty = []
 
-  let report tenv summary unused_branches =
-    List.iter unused_branches ~f:(UnusedBranch.report tenv summary)
+  let report analysis_data unused_branches =
+    List.iter unused_branches ~f:(UnusedBranch.report analysis_data)
 end
 
 module UnreachableStatement = struct
   type t = {location: Location.t}
 
-  let report summary {location} =
+  let report {InterproceduralAnalysis.proc_desc; err_log} {location} =
     let ltr = [Errlog.make_trace_element 0 location "Here" []] in
-    Reporting.log_error summary ~loc:location ~ltr IssueType.unreachable_code_after
-      "Unreachable code after statement"
+    Reporting.log_issue proc_desc err_log ~loc:location ~ltr BufferOverrunChecker
+      IssueType.unreachable_code_after "Unreachable code after statement"
 end
 
 module UnreachableStatements = struct
@@ -67,8 +63,8 @@ module UnreachableStatements = struct
 
   let empty = []
 
-  let report summary unreachable_statements =
-    List.iter unreachable_statements ~f:(UnreachableStatement.report summary)
+  let report analysis_data unreachable_statements =
+    List.iter unreachable_statements ~f:(UnreachableStatement.report analysis_data)
 end
 
 module Checks = struct
@@ -261,6 +257,7 @@ type get_checks_summary = Procname.t -> checks_summary option
 
 let check_instr :
        get_checks_summary
+    -> BoSummary.get_summary
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
@@ -270,7 +267,8 @@ let check_instr :
     -> Dom.Mem.t
     -> PO.ConditionSet.checked_t
     -> PO.ConditionSet.checked_t =
- fun get_checks_summary get_formals pname tenv integer_type_widths node instr mem cond_set ->
+ fun get_checks_summary get_summary get_formals pname tenv integer_type_widths node instr mem
+     cond_set ->
   match instr with
   | Sil.Load {e= exp; loc= location} ->
       cond_set
@@ -296,6 +294,7 @@ let check_instr :
           let model_env =
             let node_hash = CFG.Node.hash node in
             BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+              get_summary
           in
           check model_env mem cond_set
       | None -> (
@@ -327,6 +326,7 @@ let print_debug_info : Sil.instr -> Dom.Mem.t -> PO.ConditionSet.checked_t -> un
 
 let check_instrs :
        get_checks_summary
+    -> BoSummary.get_summary
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
@@ -337,7 +337,8 @@ let check_instrs :
     -> Dom.Mem.t AbstractInterpreter.State.t
     -> Checks.t
     -> Checks.t =
- fun get_checks_summary get_formals pname tenv integer_type_widths cfg node instrs state checks ->
+ fun get_checks_summary get_summary get_formals pname tenv integer_type_widths cfg node instrs state
+     checks ->
   match state with
   | _ when Instrs.is_empty instrs ->
       checks
@@ -354,8 +355,8 @@ let check_instrs :
             checks
       in
       let cond_set =
-        check_instr get_checks_summary get_formals pname tenv integer_type_widths node instr pre
-          checks.cond_set
+        check_instr get_checks_summary get_summary get_formals pname tenv integer_type_widths node
+          instr pre checks.cond_set
       in
       print_debug_info instr pre cond_set ;
       {checks with cond_set}
@@ -363,6 +364,7 @@ let check_instrs :
 
 let check_node :
        get_checks_summary
+    -> BoSummary.get_summary
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
@@ -372,12 +374,13 @@ let check_node :
     -> Checks.t
     -> CFG.Node.t
     -> Checks.t =
- fun get_checks_summary get_formals pname tenv integer_type_widths cfg inv_map checks node ->
+ fun get_checks_summary get_summary get_formals pname tenv integer_type_widths cfg inv_map checks
+     node ->
   match BufferOverrunAnalysis.extract_state (CFG.Node.id node) inv_map with
   | Some state ->
       let instrs = CFG.instrs node in
-      check_instrs get_checks_summary get_formals pname tenv integer_type_widths cfg node instrs
-        state checks
+      check_instrs get_checks_summary get_summary get_formals pname tenv integer_type_widths cfg
+        node instrs state checks
   | _ ->
       checks
 
@@ -386,6 +389,7 @@ type checks = Checks.t
 
 let compute_checks :
        get_checks_summary
+    -> BoSummary.get_summary
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
@@ -393,16 +397,18 @@ let compute_checks :
     -> CFG.t
     -> BufferOverrunAnalysis.invariant_map
     -> checks =
- fun get_checks_summary get_formals pname tenv integer_type_widths cfg inv_map ->
+ fun get_checks_summary get_summary get_formals pname tenv integer_type_widths cfg inv_map ->
   CFG.fold_nodes cfg
-    ~f:(check_node get_checks_summary get_formals pname tenv integer_type_widths cfg inv_map)
+    ~f:
+      (check_node get_checks_summary get_summary get_formals pname tenv integer_type_widths cfg
+         inv_map)
     ~init:Checks.empty
 
 
-let report_errors : Tenv.t -> checks -> Summary.t -> unit =
- fun tenv {cond_set; unused_branches; unreachable_statements} summary ->
-  UnusedBranches.report tenv summary unused_branches ;
-  UnreachableStatements.report summary unreachable_statements ;
+let report_errors ({InterproceduralAnalysis.proc_desc; err_log} as analysis_data)
+    {Checks.cond_set; unused_branches; unreachable_statements} =
+  UnusedBranches.report analysis_data unused_branches ;
+  UnreachableStatements.report analysis_data unreachable_statements ;
   let report cond trace issue_type =
     let location = PO.ConditionTrace.get_report_location trace in
     let description ~markup = PO.description ~markup cond trace in
@@ -411,7 +417,8 @@ let report_errors : Tenv.t -> checks -> Summary.t -> unit =
       Trace.Issue.make_err_trace ~description (PO.ConditionTrace.get_val_traces trace)
       |> Errlog.concat_traces
     in
-    Reporting.log_error summary ~loc:location ~ltr:trace issue_type (description ~markup:true)
+    Reporting.log_issue proc_desc err_log ~loc:location ~ltr:trace BufferOverrunChecker issue_type
+      (description ~markup:true)
   in
   PO.ConditionSet.report_errors ~report cond_set
 
@@ -424,26 +431,37 @@ let get_checks_summary : checks -> checks_summary =
   PO.ConditionSet.for_summary cond_set
 
 
-let checker : Callbacks.proc_callback_args -> Summary.t =
- fun {exe_env; summary} ->
-  let proc_desc = Summary.get_proc_desc summary in
-  let proc_name = Summary.get_proc_name summary in
-  let tenv = Exe_env.get_tenv exe_env proc_name in
+let checker ({InterproceduralAnalysis.proc_desc; tenv; exe_env; analyze_dependency} as analysis_data)
+    =
+  let proc_name = Procdesc.get_proc_name proc_desc in
   let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
   let inv_map =
-    BufferOverrunAnalysis.cached_compute_invariant_map summary tenv integer_type_widths
+    BufferOverrunAnalysis.cached_compute_invariant_map
+      (InterproceduralAnalysis.bind_payload analysis_data ~f:snd)
   in
   let underlying_exit_node = Procdesc.get_exit_node proc_desc in
   let pp_name f = F.pp_print_string f "bufferoverrun check" in
-  NodePrinter.with_session ~pp_name underlying_exit_node ~f:(fun () ->
+  AnalysisCallbacks.html_debug_new_node_session ~pp_name underlying_exit_node ~f:(fun () ->
       let cfg = CFG.from_pdesc proc_desc in
       let checks =
-        let get_checks_summary callee_pname = Payload.read ~caller_summary:summary ~callee_pname in
-        let get_formals callee_pname =
-          Ondemand.get_proc_desc callee_pname |> Option.map ~f:Procdesc.get_pvar_formals
+        let open IOption.Let_syntax in
+        let get_summary_common callee_pname =
+          let+ _, summaries = analyze_dependency callee_pname in
+          summaries
         in
-        compute_checks get_checks_summary get_formals proc_name tenv integer_type_widths cfg inv_map
+        let get_checks_summary callee_pname =
+          let* checker_summary, _analysis_summary = get_summary_common callee_pname in
+          checker_summary
+        in
+        let get_summary callee_pname =
+          let* _checker_summary, analysis_summary = get_summary_common callee_pname in
+          analysis_summary
+        in
+        let get_formals callee_pname =
+          AnalysisCallbacks.get_proc_desc callee_pname >>| Procdesc.get_pvar_formals
+        in
+        compute_checks get_checks_summary get_summary get_formals proc_name tenv integer_type_widths
+          cfg inv_map
       in
-      report_errors tenv checks summary ;
-      let cond_set = get_checks_summary checks in
-      Payload.update_summary cond_set summary )
+      report_errors analysis_data checks ;
+      Some (get_checks_summary checks) )

@@ -25,11 +25,12 @@ type nullsafe_mode = [Default | LocalTrustAll | LocalTrustSome | LocalTrustNone 
 type nullsafe_meta_issue_info = {
   num_issues: int;
   curr_nullsafe_mode: nullsafe_mode;
+  can_be_promoted_to: nullsafe_mode nullable (* If present, it implies that the class is not only free of issues, but the mode can be promoted to a stricter one *)
 }
 
 type nullsafe_extra = {
   class_name: string;
-  package: string option;
+  package: string nullable;
   ?meta_issue_info: nullsafe_meta_issue_info option (* Should be present if the issue is "nullsafe meta issue" *)
 }
 
@@ -65,9 +66,6 @@ type jsonbug = {
 
 type report = jsonbug list
 
-type json_trace = {
-  trace : json_trace_item list;
-}
 
 type hum_info = {
   hum_polynomial : string;
@@ -81,6 +79,7 @@ type cost_info = {
   polynomial : string;
   ?degree : int option;
   hum : hum_info;
+  trace : json_trace_item list;
 }
 
 

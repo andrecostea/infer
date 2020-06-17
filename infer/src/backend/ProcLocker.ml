@@ -15,16 +15,21 @@ let log_unlock_time = BackendStats.add_to_proc_locker_unlock_time
 
 let record_time_of ~f ~log_f =
   let ExecutionDuration.{result; execution_duration} = ExecutionDuration.timed_evaluate ~f in
-  log_f execution_duration ; result
+  log_f execution_duration ;
+  result
 
 
-let locks_dir = Config.procnames_locks_dir
+let locks_dir = ResultsDir.get_path ProcnamesLocks
 
 let locks_target = locks_dir ^/ "locks_target"
 
 let create_file filename = Unix.openfile ~mode:[O_CREAT; O_RDONLY] filename |> Unix.close
 
-let setup () = Utils.rmtree locks_dir ; Utils.create_dir locks_dir ; create_file locks_target
+let setup () =
+  Utils.rmtree locks_dir ;
+  Utils.create_dir locks_dir ;
+  create_file locks_target
+
 
 let clean () = ()
 

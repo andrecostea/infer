@@ -8,8 +8,8 @@
 open! IStd
 open AbstractDomain.Types
 
-module ItvThresholds : AbstractDomain.FiniteSetS with type elt = Z.t
 (** Set of integers for threshold widening *)
+module ItvThresholds : AbstractDomain.FiniteSetS with type elt = Z.t
 
 (** Domain for recording which operations are used for evaluating interval values *)
 module ItvUpdatedBy : sig
@@ -515,7 +515,7 @@ module Mem : sig
 
   val get_latest_prune : _ t0 -> LatestPrune.t
 
-  val get_reachable_locs_from : (Pvar.t * Typ.t) list -> AbsLoc.PowLoc.t -> _ t0 -> AbsLoc.PowLoc.t
+  val get_reachable_locs_from : (Pvar.t * Typ.t) list -> AbsLoc.LocSet.t -> _ t0 -> AbsLoc.LocSet.t
   (** Get reachable locations from [formals] and [locs] when called
       [get_reachable_locs_from formals locs mem] *)
 

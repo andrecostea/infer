@@ -4,6 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
+
 open! IStd
 module F = Format
 module L = Logging
@@ -12,19 +13,14 @@ module Domain = StarvationDomain
 
 let pname_pp = MF.wrap_monospaced Procname.pp
 
-let attrs_of_pname = Summary.OnDisk.proc_resolve_attributes
-
-module Payload = SummaryPayload.Make (struct
-  type t = Domain.summary
-
-  let field = Payloads.Fields.starvation
-end)
+type analysis_data =
+  {interproc: StarvationDomain.summary InterproceduralAnalysis.t; formals: FormalMap.t}
 
 module TransferFunctions (CFG : ProcCfg.S) = struct
   module CFG = CFG
   module Domain = Domain
 
-  type extras = FormalMap.t
+  type nonrec analysis_data = analysis_data
 
   let log_parse_error error pname actuals =
     L.debug Analysis Verbose "%s pname:%a actuals:%a@." error Procname.pp pname
@@ -99,9 +95,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             |> Option.value ~default:StarvationModels.ForUnknownThread
           in
           Some (runnable, thread)
-      | Some runnable :: _ when StarvationModels.schedules_work_on_ui_thread tenv callee ->
+      | Some runnable :: _ when StarvationModels.schedules_first_arg_on_ui_thread tenv callee ->
           Some (runnable, StarvationModels.ForUIThread)
-      | Some runnable :: _ when StarvationModels.schedules_work_on_bg_thread tenv callee ->
+      | _ :: Some runnable :: _ when StarvationModels.schedules_second_arg_on_ui_thread tenv callee
+        ->
+          Some (runnable, StarvationModels.ForUIThread)
+      | Some runnable :: _ when StarvationModels.schedules_first_arg_on_bg_thread tenv callee ->
           Some (runnable, StarvationModels.ForNonUIThread)
       | _ ->
           None
@@ -117,13 +116,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
            {astate with attributes} )
 
 
-  let do_call ProcData.{tenv; summary; extras} lhs callee actuals loc (astate : Domain.t) =
+  let do_call {interproc= {tenv; analyze_dependency}; formals} lhs callee actuals loc
+      (astate : Domain.t) =
     let open Domain in
     let make_ret_attr return_attribute = {empty_summary with return_attribute} in
     let make_thread thread = {empty_summary with thread} in
     let actuals_acc_exps = get_access_expr_list actuals in
     let get_returned_executor_summary () =
-      StarvationModels.get_returned_executor ~attrs_of_pname tenv callee actuals
+      StarvationModels.get_returned_executor tenv callee actuals
       |> Option.map ~f:(fun thread_constraint -> make_ret_attr (WorkScheduler thread_constraint))
     in
     let get_thread_assert_summary () =
@@ -148,7 +148,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         Some (make_ret_attr (Looper ForUIThread))
       else None
     in
-    let get_callee_summary () = Payload.read ~caller_summary:summary ~callee_pname:callee in
+    let get_callee_summary () = analyze_dependency callee |> Option.map ~f:snd in
     let treat_handler_constructor () =
       if StarvationModels.is_handler_constructor tenv callee actuals then
         match actuals_acc_exps with
@@ -205,7 +205,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         ; get_mainLooper_summary
         ; get_callee_summary ]
       |> Option.map ~f:(fun summary ->
-             let subst = Lock.make_subst extras actuals in
+             let subst = Lock.make_subst formals actuals in
              let callsite = CallSite.make callee loc in
              Domain.integrate_summary ~tenv ~lhs ~subst callsite astate summary )
     in
@@ -214,12 +214,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     |> Option.value ~default:astate
 
 
-  let exec_instr (astate : Domain.t) ({ProcData.summary; tenv; extras} as procdata) _
+  let exec_instr (astate : Domain.t) ({interproc= {proc_desc; tenv}; formals} as analysis_data) _
       (instr : HilInstr.t) =
     let open ConcurrencyModels in
     let open StarvationModels in
-    let get_lock_path = Domain.Lock.make extras in
-    let procname = Summary.get_proc_name summary in
+    let get_lock_path = Domain.Lock.make formals in
+    let procname = Procdesc.get_proc_name proc_desc in
     let is_java = Procname.is_java procname in
     let do_lock locks loc astate =
       List.filter_map ~f:get_lock_path locks |> Domain.acquire ~tenv astate ~procname ~loc
@@ -268,7 +268,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | NoEffect when is_java && is_strict_mode_violation tenv callee actuals ->
           Domain.strict_mode_call ~callee ~loc astate
       | NoEffect when is_java && is_monitor_wait tenv callee actuals ->
-          Domain.wait_on_monitor ~loc extras actuals astate
+          Domain.wait_on_monitor ~loc formals actuals astate
       | NoEffect when is_java && is_future_get tenv callee actuals ->
           Domain.future_get ~callee ~loc actuals astate
       | NoEffect when is_java -> (
@@ -278,11 +278,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           | Some sev ->
               Domain.blocking_call ~callee sev ~loc astate
           | None ->
-              do_call procdata ret_exp callee actuals loc astate )
+              do_call analysis_data ret_exp callee actuals loc astate )
       | NoEffect ->
           (* in C++/Obj C we only care about deadlocks, not starvation errors *)
           let ret_exp = HilExp.AccessExpression.base ret_base in
-          do_call procdata ret_exp callee actuals loc astate )
+          do_call analysis_data ret_exp callee actuals loc astate )
 
 
   let pp_session_name _node fmt = F.pp_print_string fmt "starvation"
@@ -294,16 +294,16 @@ module Analyzer = LowerHil.MakeAbstractInterpreter (TransferFunctions (ProcCfg.N
 let set_class_init_attributes procname (astate : Domain.t) =
   let open Domain in
   let attributes =
-    Procname.get_class_type_name procname
-    |> Option.map ~f:(fun tname -> Procname.(Java (Java.get_class_initializer tname)))
-    |> Option.bind ~f:Payload.read_toplevel_procedure
+    ConcurrencyUtils.get_java_class_initializer_summary_of procname
     |> Option.value_map ~default:AttributeDomain.top ~f:(fun summary -> summary.attributes)
   in
   ({astate with attributes} : t)
 
 
 (** Compute the attributes of instance variables that all constructors agree on. *)
-let set_constructor_attributes tenv procname (astate : Domain.t) =
+let set_constructor_attributes ({InterproceduralAnalysis.proc_desc} as interproc)
+    (astate : Domain.t) =
+  let procname = Procdesc.get_proc_name proc_desc in
   let open Domain in
   (* make a local [this] variable, for replacing all constructor attribute map keys' roots *)
   let local_this = Pvar.mk Mangled.this procname |> Var.of_pvar in
@@ -321,15 +321,7 @@ let set_constructor_attributes tenv procname (astate : Domain.t) =
     AttributeDomain.(fold (fun exp attr acc -> add (make_local exp) attr acc) attributes empty)
   in
   let attributes =
-    Procname.get_class_type_name procname
-    (* retrieve its definition *)
-    |> Option.bind ~f:(Tenv.lookup tenv)
-    (* get the list of methods in the class *)
-    |> Option.value_map ~default:[] ~f:(fun (tstruct : Struct.t) -> tstruct.methods)
-    (* keep only the constructors *)
-    |> List.filter ~f:Procname.(function Java jname -> Java.is_constructor jname | _ -> false)
-    (* get the summaries of the constructors *)
-    |> List.filter_map ~f:Payload.read_toplevel_procedure
+    ConcurrencyUtils.get_java_constructor_summaries_of interproc
     (* make instances of [this] local to the current procedure and select only the attributes *)
     |> List.map ~f:(fun (summary : Domain.summary) -> localize_attrs summary.attributes)
     (* join all the attribute maps together *)
@@ -339,7 +331,8 @@ let set_constructor_attributes tenv procname (astate : Domain.t) =
   {astate with attributes}
 
 
-let set_initial_attributes tenv procname astate =
+let set_initial_attributes ({InterproceduralAnalysis.proc_desc} as interproc) astate =
+  let procname = Procdesc.get_proc_name proc_desc in
   if not Config.starvation_whole_program then astate
   else
     match procname with
@@ -350,23 +343,21 @@ let set_initial_attributes tenv procname astate =
       when Procname.Java.(is_constructor java_pname || is_static java_pname) ->
         (* analyzing a constructor or static method, so we need the attributes established by the
            class initializer *)
-        set_class_init_attributes procname astate
+        set_class_init_attributes interproc astate
     | Procname.Java _ ->
         (* we are analyzing an instance method, so we need constructor-established attributes
            which will include those by the class initializer *)
-        set_constructor_attributes tenv procname astate
+        set_constructor_attributes interproc astate
     | _ ->
         astate
 
 
-let analyze_procedure {Callbacks.exe_env; summary} =
-  let proc_desc = Summary.get_proc_desc summary in
+let analyze_procedure ({InterproceduralAnalysis.proc_desc; tenv} as interproc) =
   let procname = Procdesc.get_proc_name proc_desc in
-  let tenv = Exe_env.get_tenv exe_env procname in
-  if StarvationModels.should_skip_analysis tenv procname [] then summary
+  if StarvationModels.should_skip_analysis tenv procname [] then None
   else
     let formals = FormalMap.make proc_desc in
-    let proc_data = ProcData.make summary tenv formals in
+    let proc_data = {interproc; formals} in
     let loc = Procdesc.get_loc proc_desc in
     let set_lock_state_for_synchronized_proc astate =
       if Procdesc.is_java_synchronized proc_desc then
@@ -377,29 +368,26 @@ let analyze_procedure {Callbacks.exe_env; summary} =
     in
     let set_thread_status_by_annotation (astate : Domain.t) =
       let thread =
-        if ConcurrencyModels.annotated_as_worker_thread ~attrs_of_pname tenv procname then
+        if ConcurrencyModels.annotated_as_worker_thread tenv procname then
           Domain.ThreadDomain.BGThread
-        else if ConcurrencyModels.runs_on_ui_thread ~attrs_of_pname tenv procname then
-          Domain.ThreadDomain.UIThread
+        else if ConcurrencyModels.runs_on_ui_thread tenv procname then Domain.ThreadDomain.UIThread
         else astate.thread
       in
       {astate with thread}
     in
     let filter_blocks =
-      if StarvationModels.is_annotated_nonblocking ~attrs_of_pname tenv procname then
-        Domain.filter_blocking_calls
+      if StarvationModels.is_annotated_nonblocking tenv procname then Domain.filter_blocking_calls
       else Fn.id
     in
     let initial =
       Domain.bottom
       (* set the attributes of instance variables set up by all constructors or the class initializer *)
-      |> set_initial_attributes tenv procname
+      |> set_initial_attributes interproc
       |> set_lock_state_for_synchronized_proc |> set_thread_status_by_annotation
     in
-    Analyzer.compute_post proc_data ~initial
+    Analyzer.compute_post proc_data ~initial proc_desc
     |> Option.map ~f:filter_blocks
     |> Option.map ~f:(Domain.summary_of_astate proc_desc)
-    |> Option.fold ~init:summary ~f:(fun acc payload -> Payload.update_summary payload acc)
 
 
 (** per-file report map, which takes care of deduplication *)
@@ -484,7 +472,7 @@ end = struct
   let issue_log_of loc_map =
     let log_report ~issue_log loc {problem; pname; ltr; message} =
       let issue_type = issue_type_of_problem problem in
-      Reporting.log_issue_external ~issue_log pname Exceptions.Error ~loc ~ltr issue_type message
+      Reporting.log_issue_external ~issue_log pname ~loc ~ltr Starvation issue_type message
     in
     let mk_deduped_report ({message} as report) =
       { report with
@@ -551,8 +539,7 @@ end = struct
         loc_map SourceFile.Map.empty
     in
     SourceFile.Map.iter
-      (fun file loc_map ->
-        issue_log_of loc_map |> IssueLog.store ~dir:Config.starvation_issues_dir_name ~file )
+      (fun file loc_map -> issue_log_of loc_map |> IssueLog.store ~entry:StarvationIssues ~file)
       source_map
 end
 
@@ -591,17 +578,17 @@ let should_report pdesc =
       false
 
 
-let fold_reportable_summaries (tenv, current_summary) clazz ~init ~f =
+let fold_reportable_summaries analyze_ondemand tenv clazz ~init ~f =
   let methods =
     Tenv.lookup tenv clazz
     |> Option.value_map ~default:[] ~f:(fun tstruct -> tstruct.Struct.methods)
   in
   let f acc mthd =
-    Ondemand.get_proc_desc mthd
+    AnalysisCallbacks.get_proc_desc mthd
     |> Option.value_map ~default:acc ~f:(fun other_pdesc ->
            if should_report other_pdesc then
-             Payload.read ~caller_summary:current_summary ~callee_pname:mthd
-             |> Option.map ~f:(fun payload -> (mthd, payload))
+             analyze_ondemand mthd
+             |> Option.map ~f:(fun (_, payload) -> (mthd, payload))
              |> Option.fold ~init:acc ~f
            else acc )
   in
@@ -669,10 +656,9 @@ let report_on_parallel_composition ~should_report_starvation tenv pdesc pair loc
   else report_map
 
 
-let report_on_pair tenv summary (pair : Domain.CriticalPair.t) report_map =
+let report_on_pair ~analyze_ondemand tenv pdesc (pair : Domain.CriticalPair.t) report_map =
   let open Domain in
-  let pdesc = Summary.get_proc_desc summary in
-  let pname = Summary.get_proc_name summary in
+  let pname = Procdesc.get_proc_name pdesc in
   let event = pair.elem.event in
   let should_report_starvation =
     CriticalPair.is_uithread pair && not (Procname.is_constructor pname)
@@ -704,7 +690,7 @@ let report_on_pair tenv summary (pair : Domain.CriticalPair.t) report_map =
       in
       let ltr, loc = make_trace_and_loc () in
       ReportMap.add_strict_mode_violation tenv pdesc loc ltr error_message report_map
-  | LockAcquire _ when StarvationModels.is_annotated_lockless ~attrs_of_pname tenv pname ->
+  | LockAcquire _ when StarvationModels.is_annotated_lockless tenv pname ->
       let error_message =
         Format.asprintf "Method %a is annotated %s but%a." pname_pp pname
           (MF.monospaced_to_string Annotations.lockless)
@@ -727,7 +713,7 @@ let report_on_pair tenv summary (pair : Domain.CriticalPair.t) report_map =
                 and retrieve all the summaries of the methods of that class;
                 then, report on the parallel composition of the current pair and any pair in these
                 summaries that can indeed run in parallel *)
-             fold_reportable_summaries (tenv, summary) other_class ~init:report_map
+             fold_reportable_summaries analyze_ondemand tenv other_class ~init:report_map
                ~f:(fun acc (other_pname, {critical_pairs}) ->
                  CriticalPairs.fold
                    (report_on_parallel_composition ~should_report_starvation tenv pdesc pair lock
@@ -737,99 +723,19 @@ let report_on_pair tenv summary (pair : Domain.CriticalPair.t) report_map =
       report_map
 
 
-let reporting {Callbacks.procedures; exe_env} =
+let reporting {InterproceduralAnalysis.procedures; file_exe_env; analyze_file_dependency} =
   if Config.starvation_whole_program then IssueLog.empty
   else
-    let report_on_summary tenv summary report_map (payload : Domain.summary) =
-      Domain.CriticalPairs.fold (report_on_pair tenv summary) payload.critical_pairs report_map
+    let report_on_proc tenv proc_desc report_map (payload : Domain.summary) =
+      Domain.CriticalPairs.fold
+        (report_on_pair ~analyze_ondemand:analyze_file_dependency tenv proc_desc)
+        payload.critical_pairs report_map
     in
     let report_procedure report_map procname =
-      Ondemand.analyze_proc_name_no_caller procname
-      |> Option.value_map ~default:report_map ~f:(fun summary ->
-             let proc_desc = Summary.get_proc_desc summary in
-             let tenv = Exe_env.get_tenv exe_env procname in
-             if should_report proc_desc then
-               Payload.read_toplevel_procedure procname
-               |> Option.fold ~init:report_map ~f:(report_on_summary tenv summary)
+      analyze_file_dependency procname
+      |> Option.value_map ~default:report_map ~f:(fun (proc_desc, summary) ->
+             let tenv = Exe_env.get_tenv file_exe_env procname in
+             if should_report proc_desc then report_on_proc tenv proc_desc report_map summary
              else report_map )
     in
     List.fold procedures ~init:ReportMap.empty ~f:report_procedure |> ReportMap.issue_log_of
-
-
-(* given a scheduled-work item, read the summary of the scheduled method from the disk
-   and adapt its contents to the thread it was scheduled too *)
-let get_summary_of_scheduled_work (work_item : Domain.ScheduledWorkItem.t) =
-  let astate = {Domain.bottom with thread= work_item.thread} in
-  let callsite = CallSite.make work_item.procname work_item.loc in
-  Summary.OnDisk.get work_item.procname
-  |> Option.bind ~f:(fun (summary : Summary.t) -> Payloads.starvation summary.payloads)
-  |> Option.map ~f:(Domain.integrate_summary callsite astate)
-  |> Option.map ~f:(fun (astate : Domain.t) -> astate.critical_pairs)
-
-
-(* given a summary, do [f work critical_pairs] for each [work] item scheduled in the summary,
-   where [critical_pairs] are those of the method scheduled, adapted to the thread it's scheduled for *)
-let iter_summary ~f exe_env (summary : Summary.t) =
-  let open Domain in
-  Payloads.starvation summary.payloads
-  |> Option.iter ~f:(fun ({scheduled_work; critical_pairs} : summary) ->
-         let pname = Summary.get_proc_name summary in
-         let tenv = Exe_env.get_tenv exe_env pname in
-         if ConcurrencyModels.is_modeled_ui_method tenv pname then f pname critical_pairs ;
-         ScheduledWorkDomain.iter
-           (fun work -> get_summary_of_scheduled_work work |> Option.iter ~f:(f pname))
-           scheduled_work )
-
-
-module WorkHashSet = struct
-  module T = struct
-    type t = Procname.t * Domain.CriticalPair.t
-
-    (* [compare] for critical pairs ignore various fields, so using a generated equality here would
-       break the polymorphic hash function.  We use [phys_equal] instead and rely on the clients to
-       not add duplicate items. *)
-    let equal = phys_equal
-
-    let hash = Hashtbl.hash
-  end
-
-  include Caml.Hashtbl.Make (T)
-
-  let add_pairs work_set caller pairs =
-    let open Domain in
-    CriticalPairs.iter (fun pair -> replace work_set (caller, pair) ()) pairs
-end
-
-let report exe_env work_set =
-  let open Domain in
-  let wrap_report (procname, (pair : CriticalPair.t)) () init =
-    Summary.OnDisk.get procname
-    |> Option.fold ~init ~f:(fun acc summary ->
-           let pdesc = Summary.get_proc_desc summary in
-           let tenv = Exe_env.get_tenv exe_env procname in
-           let acc = report_on_pair tenv summary pair acc in
-           match pair.elem.event with
-           | LockAcquire lock ->
-               let should_report_starvation =
-                 CriticalPair.is_uithread pair && not (Procname.is_constructor procname)
-               in
-               WorkHashSet.fold
-                 (fun (other_procname, (other_pair : CriticalPair.t)) () acc ->
-                   report_on_parallel_composition ~should_report_starvation tenv pdesc pair lock
-                     other_procname other_pair acc )
-                 work_set acc
-           | _ ->
-               acc )
-  in
-  WorkHashSet.fold wrap_report work_set ReportMap.empty |> ReportMap.store_multi_file
-
-
-let whole_program_analysis () =
-  L.progress "Starvation whole program analysis starts.@." ;
-  let work_set = WorkHashSet.create 1 in
-  let exe_env = Exe_env.mk () in
-  L.progress "Processing on-disk summaries...@." ;
-  SpecsFiles.iter ~f:(iter_summary exe_env ~f:(WorkHashSet.add_pairs work_set)) ;
-  L.progress "Loaded %d pairs@." (WorkHashSet.length work_set) ;
-  L.progress "Reporting on processed summaries...@." ;
-  report exe_env work_set

@@ -23,9 +23,9 @@ module.exports = {
       title: "Infer",
       logo: { alt: "Infer Logo", src: "img/logo.png" },
       links: [
-        { label: "Docs", to: "docs/getting-started" },
-        { label: "Support", to: "docs/support" },
-        { label: "Blog", to: "blog" },
+        { label: "Docs", to: "docs/getting-started", position: "right" },
+        { label: "Support", to: "docs/support", position: "right" },
+        { label: "Blog", to: "blog", position: "right" },
         {
           href: "https://twitter.com/fbinfer",
           label: "Twitter",
@@ -66,10 +66,14 @@ module.exports = {
             { label: "Blog", to: "blog" },
             { label: "GitHub", href: "https://github.com/facebook/infer" },
             { label: "Twitter", href: "https://twitter.com/fbinfer" },
+            { label: "Facebook", href: "https://www.facebook.com/inferstaticanalyzer" },
           ],
         },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} Facebook, Inc. Built with Docusaurus.`,
+    },
+    prism: {
+      additionalLanguages: ['java'],
     },
   },
   presets: [

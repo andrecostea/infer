@@ -91,6 +91,9 @@ val implements_google : string -> Tenv.t -> string -> bool
 val implements_android : string -> Tenv.t -> string -> bool
 (** Check whether class implements a class of Android *)
 
+val implements_infer_annotation : string -> Tenv.t -> string -> bool
+(** Check whether class implements a class of Infer annotation *)
+
 val implements_xmob_utils : string -> Tenv.t -> string -> bool
 (** Check whether class implements a class of xmod.utils *)
 
@@ -100,9 +103,6 @@ val supertype_exists : Tenv.t -> (Typ.Name.t -> Struct.t -> bool) -> Typ.Name.t 
 val supertype_find_map_opt : Tenv.t -> (Typ.Name.t -> 'a option) -> Typ.Name.t -> 'a option
 (** Return the first non-None result found when applying the given function to supertypes of the
     named type, including the type itself *)
-
-val java_get_vararg_values : Procdesc.Node.t -> Pvar.t -> Idenv.t -> Exp.t list
-(** Get the values of a vararg parameter given the pvar used to assign the elements. *)
 
 val proc_calls :
      (Procname.t -> ProcAttributes.t option)
@@ -164,5 +164,11 @@ val is_override_of_java_lang_object_equals : Procname.t -> bool
 module ObjectiveC : sig
   val is_core_graphics_create_or_copy : Tenv.t -> string -> bool
 
+  val is_core_foundation_create_or_copy : Tenv.t -> string -> bool
+
   val is_core_graphics_release : Tenv.t -> string -> bool
+
+  val is_modelled_as_alloc : Tenv.t -> string -> bool
+
+  val is_modelled_as_release : Tenv.t -> string -> bool
 end

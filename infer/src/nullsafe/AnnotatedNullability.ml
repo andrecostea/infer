@@ -19,6 +19,7 @@ type t =
   | Nullable of nullable_origin
   | ThirdPartyNonnull
   | UncheckedNonnull of unchecked_nonnull_origin
+  | LocallyTrustedNonnull
   | LocallyCheckedNonnull
   | StrictNonnull of strict_nonnull_origin
 [@@deriving compare]
@@ -38,6 +39,7 @@ and strict_nonnull_origin =
   | StrictMode
   | PrimitiveType
   | EnumValue
+  | SyntheticField
 [@@deriving compare]
 
 let get_nullability = function
@@ -47,6 +49,8 @@ let get_nullability = function
       Nullability.ThirdPartyNonnull
   | UncheckedNonnull _ ->
       Nullability.UncheckedNonnull
+  | LocallyTrustedNonnull ->
+      Nullability.LocallyTrustedNonnull
   | LocallyCheckedNonnull ->
       Nullability.LocallyCheckedNonnull
   | StrictNonnull _ ->
@@ -80,6 +84,8 @@ let pp fmt t =
         "primitive"
     | EnumValue ->
         "enum"
+    | SyntheticField ->
+        "synthetic_field"
   in
   match t with
   | Nullable origin ->
@@ -88,13 +94,15 @@ let pp fmt t =
       F.fprintf fmt "ThirdPartyNonnull"
   | UncheckedNonnull origin ->
       F.fprintf fmt "UncheckedNonnull[%s]" (string_of_declared_nonnull_origin origin)
+  | LocallyTrustedNonnull ->
+      F.fprintf fmt "LocallyTrustedNonnull"
   | LocallyCheckedNonnull ->
       F.fprintf fmt "LocallyCheckedNonnull"
   | StrictNonnull origin ->
       F.fprintf fmt "StrictNonnull[%s]" (string_of_nonnull_origin origin)
 
 
-let of_type_and_annotation ~is_trusted_callee ~nullsafe_mode ~is_third_party typ annotations =
+let of_type_and_annotation ~is_callee_in_trust_list ~nullsafe_mode ~is_third_party typ annotations =
   if not (PatternMatch.type_is_class typ) then StrictNonnull PrimitiveType
   else if Annotations.ia_is_nullable annotations then
     (* Explicitly nullable always means Nullable *)
@@ -131,4 +139,4 @@ let of_type_and_annotation ~is_trusted_callee ~nullsafe_mode ~is_third_party typ
             if Annotations.ia_is_nonnull annotations then UncheckedNonnull AnnotatedNonnull
             else UncheckedNonnull ImplicitlyNonnull
           in
-          if is_trusted_callee then LocallyCheckedNonnull else preliminary_nullability
+          if is_callee_in_trust_list then LocallyTrustedNonnull else preliminary_nullability

@@ -19,7 +19,10 @@ let register callback_ref ~f ~description =
         (Unix.getpid ()) description Exn.pp exn
   in
   let g = !callback_ref in
-  callback_ref := fun () -> f_no_exn () ; g ()
+  callback_ref :=
+    fun () ->
+      f_no_exn () ;
+      g ()
 
 
 let register_early ~f ~description = register early_callback ~f ~description
@@ -30,18 +33,16 @@ let early () = !early_callback ()
 
 let late () = !late_callback ()
 
-let run () = early () ; late ()
+let run () =
+  early () ;
+  late ()
 
-(* Run the epilogues when we get SIGINT (Control-C). *)
-let () =
-  let run_epilogues_on_signal s =
-    F.eprintf "*** %s: Caught %s, time to die@."
-      (Filename.basename Sys.executable_name)
-      (Signal.to_string s) ;
-    run ()
-  in
-  Signal.Expert.handle Signal.int run_epilogues_on_signal
 
+(** Raised when we are interrupted by SIGINT *)
+exception Sigint
+
+(* Raise a specific exception when we get SIGINT (Control-C). *)
+let () = Caml.Sys.(set_signal sigint (Signal_handle (fun _ -> raise Sigint)))
 
 let reset () =
   (early_callback := fun () -> ()) ;

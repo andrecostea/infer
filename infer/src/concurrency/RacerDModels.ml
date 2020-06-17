@@ -9,8 +9,6 @@ open! IStd
 module L = Logging
 open ConcurrencyModels
 
-let attrs_of_pname = Summary.OnDisk.proc_resolve_attributes
-
 module AnnotationAliases = struct
   let of_json = function
     | `List aliases ->
@@ -19,8 +17,6 @@ module AnnotationAliases = struct
         L.(die UserError)
           "Couldn't parse thread-safety annotation aliases; expected list of strings"
 end
-
-type container_access = ContainerRead | ContainerWrite
 
 let make_android_support_template suffix methods =
   let open MethodMatcher in
@@ -33,21 +29,34 @@ let is_java_container_write =
   let array_methods =
     ["append"; "clear"; "delete"; "put"; "remove"; "removeAt"; "removeAtRange"; "setValueAt"]
   in
+  (* https://developer.android.com/reference/androidx/core/util/Pools.SimplePool *)
   make_android_support_template "Pools$SimplePool" ["acquire"; "release"]
+  (* https://developer.android.com/reference/android/support/v4/util/SimpleArrayMap *)
   @ make_android_support_template "SimpleArrayMap"
       ["clear"; "ensureCapacity"; "put"; "putAll"; "remove"; "removeAt"; "setValueAt"]
+  (* https://developer.android.com/reference/android/support/v4/util/SparseArrayCompat *)
   @ make_android_support_template "SparseArrayCompat" array_methods
-  @ [ {default with classname= "android.util.SparseArray"; methods= array_methods}
-    ; { default with
-        classname= "java.util.List"
-      ; methods= ["add"; "addAll"; "clear"; "remove"; "set"] }
-    ; {default with classname= "java.util.Map"; methods= ["clear"; "put"; "putAll"; "remove"]} ]
+  @ (* https://developer.android.com/reference/android/util/SparseArray *)
+  [ {default with classname= "android.util.SparseArray"; methods= array_methods}
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/List.html
+       Only methods not in parent interface [Collection] are listed *)
+    {default with classname= "java.util.List"; methods= ["replaceAll"; "retainAll"; "set"; "sort"]}
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/Map.html *)
+    { default with
+      classname= "java.util.Map"
+    ; methods= ["clear"; "merge"; "put"; "putAll"; "putIfAbsent"; "remove"; "replace"; "replaceAll"]
+    }
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/Collection.html *)
+    { default with
+      classname= "java.util.Collection"
+    ; methods= ["add"; "addAll"; "clear"; "remove"; "removeAll"; "removeIf"] } ]
   |> of_records
 
 
 let is_java_container_read =
   let open MethodMatcher in
   let array_methods = ["clone"; "get"; "indexOfKey"; "indexOfValue"; "keyAt"; "size"; "valueAt"] in
+  (* https://developer.android.com/reference/android/support/v4/util/SimpleArrayMap *)
   make_android_support_template "SimpleArrayMap"
     [ "containsKey"
     ; "containsValue"
@@ -58,36 +67,50 @@ let is_java_container_read =
     ; "keyAt"
     ; "size"
     ; "valueAt" ]
+  (* https://developer.android.com/reference/android/support/v4/util/SparseArrayCompat *)
   @ make_android_support_template "SparseArrayCompat" array_methods
-  @ [ {default with classname= "android.util.SparseArray"; methods= array_methods}
-    ; { default with
-        classname= "java.util.List"
-      ; methods=
-          [ "contains"
-          ; "containsAll"
-          ; "equals"
-          ; "get"
-          ; "hashCode"
-          ; "indexOf"
-          ; "isEmpty"
-          ; "iterator"
-          ; "lastIndexOf"
-          ; "listIterator"
-          ; "size"
-          ; "toArray" ] }
-    ; { default with
-        classname= "java.util.Map"
-      ; methods=
-          [ "containsKey"
-          ; "containsValue"
-          ; "entrySet"
-          ; "equals"
-          ; "get"
-          ; "hashCode"
-          ; "isEmpty"
-          ; "keySet"
-          ; "size"
-          ; "values" ] } ]
+  @ (* https://developer.android.com/reference/android/util/SparseArray *)
+  [ {default with classname= "android.util.SparseArray"; methods= array_methods}
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/List.html
+       Only methods not in parent interface [Collection] are listed *)
+    { default with
+      classname= "java.util.List"
+    ; methods= ["get"; "indexOf"; "isEmpty"; "lastIndexOf"; "listIterator"] }
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/Map.html *)
+    { default with
+      classname= "java.util.Map"
+    ; methods=
+        [ "compute"
+        ; "computeIfAbsent"
+        ; "computeIfPresent"
+        ; "containsKey"
+        ; "containsValue"
+        ; "entrySet"
+        ; "equals"
+        ; "forEach"
+        ; "get"
+        ; "getOrDefault"
+        ; "hashCode"
+        ; "isEmpty"
+        ; "keySet"
+        ; "size"
+        ; "values" ] }
+  ; (* https://docs.oracle.com/javase/8/docs/api/java/util/Collection.html *)
+    { default with
+      classname= "java.util.Collection"
+    ; methods=
+        [ "contains"
+        ; "containsAll"
+        ; "equals"
+        ; "get"
+        ; "hashCode"
+        ; "isEmpty"
+        ; "iterator"
+        ; "parallelStream"
+        ; "size"
+        ; "spliterator"
+        ; "stream"
+        ; "toArray" ] } ]
   |> of_records
 
 
@@ -110,23 +133,27 @@ let is_cpp_container_write =
   fun pname -> QualifiedCppName.Match.match_qualifiers matcher (Procname.get_qualifiers pname)
 
 
-let get_container_access pn tenv =
+let is_container_write tenv pn =
   match pn with
   | Procname.Java _ when is_java_container_write tenv pn [] ->
-      Some ContainerWrite
-  | Procname.Java _ when is_java_container_read tenv pn [] ->
-      Some ContainerRead
+      true
+  | (Procname.ObjC_Cpp _ | C _) when is_cpp_container_write pn ->
+      true
+  | _ ->
+      false
+
+
+let is_container_read tenv pn =
+  match pn with
   | Procname.Java _ ->
-      None
+      is_java_container_read tenv pn []
   (* The following order matters: we want to check if pname is a container write
      before we check if pname is a container read. This is due to a different
      treatment between std::map::operator[] and all other operator[]. *)
-  | (Procname.ObjC_Cpp _ | C _) when is_cpp_container_write pn ->
-      Some ContainerWrite
-  | (Procname.ObjC_Cpp _ | C _) when is_cpp_container_read pn ->
-      Some ContainerRead
+  | Procname.ObjC_Cpp _ | C _ ->
+      (not (is_cpp_container_write pn)) && is_cpp_container_read pn
   | _ ->
-      None
+      false
 
 
 (** holds of procedure names which should not be analyzed in order to avoid known sources of
@@ -156,7 +183,7 @@ let should_skip =
       false
 
 
-let has_return_annot predicate pn = Annotations.pname_has_return_annot pn ~attrs_of_pname predicate
+let has_return_annot predicate pn = Annotations.pname_has_return_annot pn predicate
 
 let is_functional pname =
   let is_annotated_functional = has_return_annot Annotations.ia_is_functional in
@@ -261,8 +288,8 @@ let is_box = function
   completely different classes that don't necessarily run on the same thread as the confined
   object. *)
 let is_thread_confined_method tenv pname =
-  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
-    Annotations.ia_is_thread_confined tenv pname
+  ConcurrencyModels.find_override_or_superclass_annotated Annotations.ia_is_thread_confined tenv
+    pname
   |> Option.is_some
 
 
@@ -300,8 +327,7 @@ let is_assumed_thread_safe item_annot =
 
 
 let is_assumed_thread_safe tenv pname =
-  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname is_assumed_thread_safe
-    tenv pname
+  ConcurrencyModels.find_override_or_superclass_annotated is_assumed_thread_safe tenv pname
   |> Option.is_some
 
 
@@ -328,7 +354,7 @@ let get_current_class_and_threadsafe_superclasses tenv pname =
 
 
 let is_thread_safe_method pname tenv =
-  match find_override_or_superclass_annotated ~attrs_of_pname is_thread_safe tenv pname with
+  match find_override_or_superclass_annotated is_thread_safe tenv pname with
   | Some (DirectlyAnnotated | Override _) ->
       true
   | _ ->
@@ -339,8 +365,7 @@ let is_marked_thread_safe pname tenv =
   ((* current class not marked [@NotThreadSafe] *)
    not
      (PatternMatch.check_current_class_attributes Annotations.ia_is_not_thread_safe tenv pname))
-  && ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname is_thread_safe tenv
-       pname
+  && ConcurrencyModels.find_override_or_superclass_annotated is_thread_safe tenv pname
      |> Option.is_some
 
 
@@ -397,13 +422,51 @@ let should_flag_interface_call tenv exps call_flags pname =
       && (not (is_builder_method java_pname))
       (* can't ask anyone to annotate interfaces in library code, and Builders should always be
          thread-safe (would be unreasonable to ask everyone to annotate them) *)
-      && ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
-           thread_safe_or_thread_confined tenv pname
+      && ConcurrencyModels.find_override_or_superclass_annotated thread_safe_or_thread_confined tenv
+           pname
          |> Option.is_none
       && receiver_is_not_safe exps tenv
       && not (implements_threadsafe_interface java_pname tenv)
   | _ ->
       false
+
+
+(** Set of standard classes/interfaces that guarantee thread-safe access. This list is heavily
+    deduplicated using the inheritance relation as represented in Infer, that is, any class that
+    implements/inherits the interfaces/classes below is considered to be thread-safe. For instance,
+    all thread-safe maps implement [ConcurrentMap] and thus need not be explicitly represented. On
+    the other hand, there is no equivalent interface for sets [ConcurrentSet], so all set-like
+    classes have to be listed. Information is mostly drawn from
+    https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/package-summary.html *)
+let synchronized_container_classes =
+  [ "android.support.v4.util.Pools$SynchronizedPool"
+  ; "androidx.core.util.Pools$SynchronizedPool"
+  ; "java.util.concurrent.BlockingDeque"
+  ; "java.util.concurrent.BlockingQueue"
+  ; "java.util.concurrent.ConcurrentMap"
+  ; "java.util.concurrent.ConcurrentSkipListSet"
+  ; "java.util.concurrent.CopyOnWriteArrayList"
+  ; "java.util.concurrent.CopyOnWriteArraySet"
+  ; "java.util.Hashtable" ]
+
+
+let is_converter_to_synchronized_container =
+  let open MethodMatcher in
+  [ (* any method in [java.util.Collections] that starts with [synchronized] is a wrapper that produces a thread-safe container *)
+    {default with classname= "java.util.Collections"; method_prefix= true; methods= ["synchronized"]}
+  ; {default with classname= "com.google.common.collect.Maps"; methods= ["newConcurrentMap"]}
+  ; {default with classname= "com.google.common.collect.Sets"; methods= ["newConcurrentHashSet"]}
+  ; { default with
+      classname= "com.google.common.collect.Queues"
+    ; methods= ["newConcurrentLinkedQueue"] } ]
+  |> of_records
+
+
+let is_synchronized_container_constructor =
+  let open MethodMatcher in
+  let default = {default with methods= [Procname.Java.constructor_method_name]} in
+  List.map synchronized_container_classes ~f:(fun classname -> {default with classname})
+  |> of_records
 
 
 let is_synchronized_container callee_pname (access_exp : HilExp.AccessExpression.t) tenv =
@@ -412,14 +475,7 @@ let is_synchronized_container callee_pname (access_exp : HilExp.AccessExpression
     | Procname.Java java_pname ->
         let typename = Procname.Java.get_class_type_name java_pname in
         let aux tn _ =
-          match Typ.Name.name tn with
-          | "java.util.concurrent.ConcurrentMap"
-          | "java.util.concurrent.CopyOnWriteArrayList"
-          | "android.support.v4.util.Pools$SynchronizedPool"
-          | "androidx.core.util.Pools$SynchronizedPool" ->
-              true
-          | _ ->
-              false
+          List.mem synchronized_container_classes ~equal:String.equal (Typ.Name.name tn)
         in
         PatternMatch.supertype_exists tenv aux typename
     | _ ->
@@ -455,43 +511,5 @@ let is_synchronized_container callee_pname (access_exp : HilExp.AccessExpression
         false
 
 
-(** check that callee is abstract and accepts one argument. In addition, its argument type must be
-    equal to its return type. *)
-let is_abstract_getthis_like callee =
-  attrs_of_pname callee
-  |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
-         attrs.is_abstract
-         &&
-         match attrs.formals with
-         | [(_, typ)] when Typ.equal typ attrs.ret_type ->
-             true
-         | _ ->
-             false )
-
-
-let creates_builder callee =
-  (match callee with Procname.Java jpname -> Procname.Java.is_static jpname | _ -> false)
-  && String.equal "create" (Procname.get_method callee)
-  && attrs_of_pname callee
-     |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
-            match attrs.ret_type with
-            | Typ.{desc= Tptr ({desc= Tstruct ret_class}, _)} ->
-                is_builder_class ret_class
-            | _ ->
-                false )
-
-
-let is_builder_passthrough callee =
-  match callee with
-  | Procname.Java java_pname ->
-      (not (Procname.Java.is_static java_pname))
-      && is_builder_method java_pname
-      && attrs_of_pname callee
-         |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
-                match attrs.formals with
-                | (_, typ) :: _ when Typ.equal typ attrs.ret_type ->
-                    true
-                | _ ->
-                    false )
-  | _ ->
-      false
+let is_initializer tenv proc_name =
+  Procname.is_constructor proc_name || FbThreadSafety.is_custom_init tenv proc_name

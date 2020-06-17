@@ -66,7 +66,8 @@ let read_file fname =
       cleanup () ;
       Ok (List.rev !res)
   | Sys_error error ->
-      cleanup () ; Error error
+      cleanup () ;
+      Error error
 
 
 (** type for files used for printing *)
@@ -223,7 +224,11 @@ let create_file_lock () =
 
 
 let with_file_lock ~file_lock:{file; oc; fd} ~f =
-  let finally () = Core.Unix.close fd ; Out_channel.close oc ; Core.Unix.remove file in
+  let finally () =
+    Core.Unix.close fd ;
+    Out_channel.close oc ;
+    Core.Unix.remove file
+  in
   try_finally_swallow_timeout ~f ~finally
 
 
@@ -256,29 +261,11 @@ let echo_in chan_in = with_channel_in ~f:print_endline chan_in
 let with_process_in command read =
   let chan = Unix.open_process_in command in
   let f () = read chan in
-  let finally () = consume_in chan ; Unix.close_process_in chan in
+  let finally () =
+    consume_in chan ;
+    Unix.close_process_in chan
+  in
   do_finally_swallow_timeout ~f ~finally
-
-
-let with_process_lines ~(debug : ('a, F.formatter, unit) format -> 'a) ~cmd ~tmp_prefix ~f =
-  let shell_cmd = List.map ~f:Escape.escape_shell cmd |> String.concat ~sep:" " in
-  let verbose_err_file = Filename.temp_file tmp_prefix ".err" in
-  let shell_cmd_redirected = Printf.sprintf "%s 2>'%s'" shell_cmd verbose_err_file in
-  debug "Trying to execute: %s@\n%!" shell_cmd_redirected ;
-  let input_lines chan = In_channel.input_lines ~fix_win_eol:true chan in
-  let res = with_process_in shell_cmd_redirected input_lines in
-  let verbose_errlog = with_file_in verbose_err_file ~f:In_channel.input_all in
-  if not (String.equal verbose_errlog "") then
-    debug "@\nlog:@\n<<<<<<@\n%s@\n>>>>>>@\n%!" verbose_errlog ;
-  match res with
-  | lines, Ok () ->
-      f lines
-  | lines, (Error _ as err) ->
-      let output = String.concat ~sep:"\n" lines in
-      L.(die ExternalError)
-        "*** Failed to execute: %s@\n*** Command: %s@\n*** Output:@\n%s@."
-        (Unix.Exit_or_signal.to_string_hum err)
-        shell_cmd output
 
 
 let is_dir_kind (kind : Unix.file_kind) = match kind with S_DIR -> true | _ -> false
@@ -331,9 +318,12 @@ let realpath ?(warn_on_error = true) path =
 let devnull = lazy (Unix.openfile "/dev/null" ~mode:[Unix.O_WRONLY])
 
 let suppress_stderr2 f2 x1 x2 =
-  let restore_stderr src = Unix.dup2 ~src ~dst:Unix.stderr ; Unix.close src in
+  let restore_stderr src =
+    Unix.dup2 ~src ~dst:Unix.stderr () ;
+    Unix.close src
+  in
   let orig_stderr = Unix.dup Unix.stderr in
-  Unix.dup2 ~src:(Lazy.force devnull) ~dst:Unix.stderr ;
+  Unix.dup2 ~src:(Lazy.force devnull) ~dst:Unix.stderr () ;
   let f () = f2 x1 x2 in
   let finally () = restore_stderr orig_stderr in
   protect ~f ~finally
@@ -364,7 +354,8 @@ let rec rmtree name =
             then rmtree (name ^/ entry) ;
             rmdir dir
         | None ->
-            Unix.closedir dir ; Unix.rmdir name
+            Unix.closedir dir ;
+            Unix.rmdir name
       in
       rmdir dir
   | _ ->
@@ -526,4 +517,5 @@ let zip_fold_filenames ~init ~f ~zip_filename =
   let file_in = Zip.open_in zip_filename in
   let collect acc (entry : Zip.entry) = f acc entry.filename in
   let result = List.fold ~f:collect ~init (Zip.entries file_in) in
-  Zip.close_in file_in ; result
+  Zip.close_in file_in ;
+  result

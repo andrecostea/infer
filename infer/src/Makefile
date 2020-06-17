@@ -76,7 +76,7 @@ GENERATED_FROM_AUTOCONF = dune.common ../dune-workspace base/Version.ml
 .PHONY: dune-workspace
 dune-workspace: ../dune-workspace
 
-GENERATED_DUNES += dune
+GENERATED_DUNES += dune al/dune clang/dune integration/dune java/dune opensource/dune unit/dune
 
 SRC_BUILD_COMMON = $(GENERATED_FROM_AUTOCONF) $(GENERATED_DUNES) $(OCAML_SOURCES)
 ifeq ($(BUILD_C_ANALYZERS),yes)
@@ -153,7 +153,7 @@ roots:=Infer
 ifeq ($(IS_FACEBOOK_TREE),yes)
 roots += $(INFER_CREATE_TRACEVIEW_LINKS_MODULE)
 endif
-clusters:=base clang java IR
+clusters:=absint al atd backend base biabduction bufferoverrun checkers clang clang_stubs concurrency cost c_stubs deadcode integration IR istd java labs llvm nullsafe opensource pulse quandary scripts test_determinator third-party topl unit
 
 ml_src_files:=$(shell find . -not -path "./*stubs*" -regex '\./[a-zA-Z].*\.ml\(i\)*')
 inc_flags:=$(foreach dir,$(shell find . -not -path './_build*' -type d),-I $(dir))
@@ -242,7 +242,12 @@ $(GENERATED_DUNES): dune.common
 	$(QUIET)cat $+ > $@
 
 dune: dune.in
-deadcode/dune: deadcode/dune.in
+al/dune: al/dune.in
+clang/dune: clang/dune.in
+integration/dune: integration/dune.in
+java/dune: java/dune.in
+opensource/dune: opensource/dune.in
+unit/dune: unit/dune.in
 
 .PHONY: clean
 clean:

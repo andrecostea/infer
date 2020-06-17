@@ -5,6 +5,8 @@ SYNOPSIS
        infer analyze [options]
        infer capture [options]
        infer compile [options]
+       infer help [options]
+       infer explore [options]
        infer report [options]
        infer reportdiff [options]
        infer run [options]
@@ -55,11 +57,11 @@ OPTIONS
        options (see also --help-full for options reserved for internal use).
 
        --annotation-reachability
-           Activates: the annotation reachability checker. Given a pair of
-           source and sink annotation, e.g. @PerformanceCritical and
-           @Expensive, this checker will warn whenever some method annotated
-           with @PerformanceCritical calls, directly or indirectly, another
-           method annotated with @Expensive (Conversely:
+           Activates: checker annotation-reachability: Given a pair of source
+           and sink annotation, e.g. `@PerformanceCritical` and `@Expensive`,
+           this checker will warn whenever some method annotated with
+           `@PerformanceCritical` calls, directly or indirectly, another
+           method annotated with `@Expensive` (Conversely:
            --no-annotation-reachability)           See also infer-analyze(1).
 
        --annotation-reachability-custom-pairs json
@@ -101,7 +103,7 @@ OPTIONS
            given sources spec           See also infer-analyze(1).
 
        --annotation-reachability-only
-           Activates: Enable --annotation-reachability and disable all other
+           Activates: Enable annotation-reachability and disable all other
            checkers (Conversely: --no-annotation-reachability-only)       
     See also infer-analyze(1).
 
@@ -110,20 +112,12 @@ OPTIONS
            --buck-compilation-database option.           See also infer-capture(1).
 
        --no-biabduction
-           Deactivates: the separation logic based bi-abduction analysis
-           using the checkers framework (Conversely: --biabduction)       
-    See also infer-analyze(1).
-
-       --biabduction-fallback-model-alloc-pattern string
-           Regex of methods that should be modelled as allocs if definition
-           is missing           See also infer-analyze(1).
-
-       --biabduction-fallback-model-free-pattern string
-           Regex of methods that should be modelled as free if definition is
-           missing           See also infer-analyze(1).
+           Deactivates: checker biabduction: This analysis deals with a range
+           of issues, many linked to memory safety. (Conversely:
+           --biabduction)           See also infer-analyze(1).
 
        --biabduction-only
-           Activates: Enable --biabduction and disable all other checkers
+           Activates: Enable biabduction and disable all other checkers
            (Conversely: --no-biabduction-only)           See also infer-analyze(1).
 
        --bo-debug int
@@ -151,6 +145,10 @@ OPTIONS
            (C/C++/Objective-C/Objective-C++). (Conversely: --no-buck-clang)       
     See also infer-capture(1).
 
+       --buck-combined
+           Activates: Buck integration for clang-based and Java targets.
+           (Conversely: --no-buck-combined)           See also infer-capture(1).
+
        --buck-compilation-database { no-deps | deps }
            Buck integration using the compilation database, with or without
            dependencies. Only includes clang targets, as per Buck's
@@ -177,11 +175,12 @@ OPTIONS
     See also infer-capture(1) and infer-run(1).
 
        --bufferoverrun
-           Activates: the buffer overrun analysis (Conversely:
-           --no-bufferoverrun)           See also infer-analyze(1).
+           Activates: checker bufferoverrun: InferBO is a detector for
+           out-of-bounds array accesses. (Conversely: --no-bufferoverrun)       
+    See also infer-analyze(1).
 
        --bufferoverrun-only
-           Activates: Enable --bufferoverrun and disable all other checkers
+           Activates: Enable bufferoverrun and disable all other checkers
            (Conversely: --no-bufferoverrun-only)           See also infer-analyze(1).
 
        --capture-blacklist regex
@@ -229,14 +228,6 @@ OPTIONS
            arrays) is not done element by element but using a builtin
            function that each analysis has to model.           See also infer-analyze(1) and infer-capture(1).
 
-       --class-loads
-           Activates: Java class loading analysis (Conversely:
-           --no-class-loads)           See also infer-analyze(1).
-
-       --class-loads-only
-           Activates: Enable --class-loads and disable all other checkers
-           (Conversely: --no-class-loads-only)           See also infer-analyze(1).
-
        --compilation-database +path
            File that contain compilation commands (can be specified multiple
            times)           See also infer-capture(1).
@@ -250,6 +241,16 @@ OPTIONS
            Activates: Emit analytics as info-level issues, like component kit
            line count and component kit file cyclomatic complexity
            (Conversely: --no-compute-analytics)           See also infer-capture(1) and infer-run(1).
+
+       --config-checks-between-markers
+           Activates: checker config-checks-between-markers: [EXPERIMENTAL]
+           Collects config checks between marker start and end. (Conversely:
+           --no-config-checks-between-markers)           See also infer-analyze(1).
+
+       --config-checks-between-markers-only
+           Activates: Enable config-checks-between-markers and disable all
+           other checkers (Conversely:
+           --no-config-checks-between-markers-only)           See also infer-analyze(1).
 
        --continue
            Activates: Continue the capture for the reactive analysis,
@@ -265,12 +266,17 @@ OPTIONS
     See also infer-analyze(1).
 
        --cost
-           Activates: checker for performance cost analysis (Conversely:
-           --no-cost)           See also infer-analyze(1).
+           Activates: checker cost: Computes the time complexity of functions
+           and methods. Can be used to detect changes in runtime complexity
+           with `infer reportdiff`. (Conversely: --no-cost)           See also infer-analyze(1).
+
+       --cost-issues-tests file
+           Write a list of cost issues in a format suitable for cost tests to
+           file           See also infer-report(1).
 
        --cost-only
-           Activates: Enable --cost and disable all other checkers
-           (Conversely: --no-cost-only)           See also infer-analyze(1).
+           Activates: Enable cost and disable all other checkers (Conversely:
+           --no-cost-only)           See also infer-analyze(1).
 
        --costs-current path
            Costs report of the latest revision           See also infer-reportdiff(1).
@@ -330,7 +336,7 @@ OPTIONS
        --no-default-checkers
            Deactivates: Default checkers: --biabduction,
            --fragment-retains-view, --inefficient-keyset-iterator, --linters,
-           --liveness, --racerd, --siof, --self_in_block, --starvation,
+           --liveness, --racerd, --siof, --self-in-block, --starvation,
            --uninit (Conversely: --default-checkers)           See also infer-analyze(1).
 
        --no-default-linters
@@ -355,14 +361,18 @@ OPTIONS
            disabling issue types does not make the corresponding checker not
            run.           Available issue types are as follows:
              
-           ANALYSIS_STOPS (disabled by default),
-             ARRAY_OUT_OF_BOUNDS_L1 (disabled by default),
+           ARRAY_OUT_OF_BOUNDS_L1 (disabled by default),
              ARRAY_OUT_OF_BOUNDS_L2 (disabled by default),
              ARRAY_OUT_OF_BOUNDS_L3 (disabled by default),
+             ASSIGN_POINTER_WARNING (enabled by default),
              Abduction_case_not_implemented (enabled by default),
              Array_of_pointsto (enabled by default),
              Assert_failure (enabled by default),
-             BIABD_USE_AFTER_FREE (enabled by default),
+             BAD_POINTER_COMPARISON (enabled by default),
+             BIABDUCTION_ANALYSIS_STOPS (disabled by default),
+             BIABDUCTION_MEMORY_LEAK (disabled by default),
+             BIABD_CONDITION_ALWAYS_FALSE (disabled by default),
+             BIABD_CONDITION_ALWAYS_TRUE (disabled by default),
              BUFFER_OVERRUN_L1 (enabled by default),
              BUFFER_OVERRUN_L2 (enabled by default),
              BUFFER_OVERRUN_L3 (enabled by default),
@@ -382,30 +392,30 @@ OPTIONS
              CHECKERS_IMMUTABLE_CAST (enabled by default),
              CHECKERS_PRINTF_ARGS (enabled by default),
              CLASS_CAST_EXCEPTION (disabled by default),
-             CLASS_LOAD (enabled by default),
-             COMPARING_FLOAT_FOR_EQUALITY (enabled by default),
              COMPONENT_FACTORY_FUNCTION (enabled by default),
              COMPONENT_FILE_CYCLOMATIC_COMPLEXITY (enabled by default),
-             COMPONENT_FILE_LINE_COUNT (enabled by default),
+             COMPONENT_FILE_LINE_COUNT (disabled by default),
              COMPONENT_INITIALIZER_WITH_SIDE_EFFECTS (enabled by default),
              COMPONENT_WITH_MULTIPLE_FACTORY_METHODS (enabled by default),
              COMPONENT_WITH_UNCONVENTIONAL_SUPERCLASS (enabled by default),
              CONDITION_ALWAYS_FALSE (disabled by default),
              CONDITION_ALWAYS_TRUE (disabled by default),
+             CONFIG_CHECKS_BETWEEN_MARKERS (disabled by default),
              CONSTANT_ADDRESS_DEREFERENCE (disabled by default),
              CREATE_INTENT_FROM_URI (enabled by default),
              CROSS_SITE_SCRIPTING (enabled by default),
+             CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK (enabled by default),
              Cannot_star (enabled by default),
-             Codequery (enabled by default),
              DANGLING_POINTER_DEREFERENCE (disabled by default),
+             DANGLING_POINTER_DEREFERENCE_MAYBE (disabled by default),
              DEADLOCK (enabled by default),
              DEAD_STORE (enabled by default),
-             DEALLOCATE_STACK_VARIABLE (enabled by default),
-             DEALLOCATE_STATIC_MEMORY (enabled by default),
-             DEALLOCATION_MISMATCH (enabled by default),
+             DIRECT_ATOMIC_PROPERTY_ACCESS (enabled by default),
+             DISCOURAGED_WEAK_PROPERTY_CUSTOM_SETTER (enabled by default),
              DIVIDE_BY_ZERO (disabled by default),
              DO_NOT_REPORT (enabled by default),
              EMPTY_VECTOR_ACCESS (enabled by default),
+             ERADICATE_BAD_NESTED_CLASS_ANNOTATION (enabled by default),
              ERADICATE_CONDITION_REDUNDANT (enabled by default),
              ERADICATE_CONDITION_REDUNDANT_NONNULL (enabled by default),
              ERADICATE_FIELD_NOT_INITIALIZED (enabled by default),
@@ -420,20 +430,17 @@ OPTIONS
              ERADICATE_META_CLASS_NEEDS_IMPROVEMENT (disabled by default),
              ERADICATE_NULLABLE_DEREFERENCE (enabled by default),
              ERADICATE_PARAMETER_NOT_NULLABLE (enabled by default),
+             ERADICATE_REDUNDANT_NESTED_CLASS_ANNOTATION (enabled by
+           default),
              ERADICATE_RETURN_NOT_NULLABLE (enabled by default),
              ERADICATE_RETURN_OVER_ANNOTATED (enabled by default),
              ERADICATE_UNCHECKED_USAGE_IN_NULLSAFE (enabled by default),
              ERADICATE_UNVETTED_THIRD_PARTY_IN_NULLSAFE (enabled by
            default),
              EXECUTION_TIME_COMPLEXITY_INCREASE (enabled by default),
-             EXECUTION_TIME_COMPLEXITY_INCREASE_COLD_START (enabled by
-           default),
              EXECUTION_TIME_COMPLEXITY_INCREASE_UI_THREAD (enabled by
            default),
              EXECUTION_TIME_UNREACHABLE_AT_EXIT (disabled by default),
-             EXPENSIVE_EXECUTION_TIME (disabled by default),
-             EXPENSIVE_EXECUTION_TIME_COLD_START (disabled by default),
-             EXPENSIVE_EXECUTION_TIME_UI_THREAD (disabled by default),
              EXPENSIVE_LOOP_INVARIANT_CALL (enabled by default),
              EXPOSED_INSECURE_INTENT_HANDLING (enabled by default),
              Failure_exe (enabled by default),
@@ -461,11 +468,13 @@ OPTIONS
              IVAR_NOT_NULL_CHECKED (enabled by default),
              Internal_error (enabled by default),
              JAVASCRIPT_INJECTION (enabled by default),
+             LAB_RESOURCE_LEAK (enabled by default),
              LOCKLESS_VIOLATION (enabled by default),
              LOCK_CONSISTENCY_VIOLATION (enabled by default),
              LOGGING_PRIVATE_DATA (enabled by default),
              Leak_after_array_abstraction (enabled by default),
              Leak_in_footprint (enabled by default),
+             Leak_unknown_origin (disabled by default),
              MEMORY_LEAK (enabled by default),
              MISSING_REQUIRED_PROP (enabled by default),
              MIXED_SELF_WEAKSELF (enabled by default),
@@ -477,34 +486,33 @@ OPTIONS
              NULL_TEST_AFTER_DEREFERENCE (disabled by default),
              PARAMETER_NOT_NULL_CHECKED (enabled by default),
              POINTER_SIZE_MISMATCH (enabled by default),
+             POINTER_TO_CONST_OBJC_CLASS (enabled by default),
              PRECONDITION_NOT_FOUND (enabled by default),
              PRECONDITION_NOT_MET (enabled by default),
              PREMATURE_NIL_TERMINATION_ARGUMENT (enabled by default),
-             PULSE_MEMORY_LEAK (disabled by default),
              PURE_FUNCTION (enabled by default),
              QUANDARY_TAINT_ERROR (enabled by default),
              REGISTERED_OBSERVER_BEING_DEALLOCATED (enabled by default),
              RESOURCE_LEAK (enabled by default),
              RETAIN_CYCLE (enabled by default),
-             RETURN_EXPRESSION_REQUIRED (enabled by default),
-             RETURN_STATEMENT_MISSING (enabled by default),
-             RETURN_VALUE_IGNORED (disabled by default),
              SHELL_INJECTION (enabled by default),
              SHELL_INJECTION_RISK (enabled by default),
-             SKIP_FUNCTION (enabled by default),
-             SKIP_POINTER_DEREFERENCE (enabled by default),
+             SKIP_FUNCTION (disabled by default),
+             SKIP_POINTER_DEREFERENCE (disabled by default),
              SQL_INJECTION (enabled by default),
              SQL_INJECTION_RISK (enabled by default),
-             STACK_VARIABLE_ADDRESS_ESCAPE (disabled by default),
+             STACK_VARIABLE_ADDRESS_ESCAPE (enabled by default),
              STARVATION (enabled by default),
              STATIC_INITIALIZATION_ORDER_FIASCO (enabled by default),
              STRICT_MODE_VIOLATION (enabled by default),
+             STRONG_DELEGATE_WARNING (enabled by default),
              STRONG_SELF_NOT_CHECKED (enabled by default),
              Symexec_memory_error (enabled by default),
              THREAD_SAFETY_VIOLATION (enabled by default),
              TOPL_ERROR (enabled by default),
              UNARY_MINUS_APPLIED_TO_UNSIGNED_EXPRESSION (disabled by
            default),
+             UNAVAILABLE_API_IN_SUPPORTED_IOS_SDK (enabled by default),
              UNINITIALIZED_VALUE (enabled by default),
              UNREACHABLE_CODE (enabled by default),
              UNTRUSTED_BUFFER_ACCESS (disabled by default),
@@ -521,7 +529,6 @@ OPTIONS
              USE_AFTER_DELETE (enabled by default),
              USE_AFTER_FREE (enabled by default),
              USE_AFTER_LIFETIME (enabled by default),
-             Unknown_proc (enabled by default),
              VECTOR_INVALIDATION (enabled by default),
              WEAK_SELF_IN_NO_ESCAPE_BLOCK (enabled by default),
              Wrong_argument_number (enabled by default).
@@ -541,11 +548,11 @@ OPTIONS
            off.           See also infer-report(1).
 
        --eradicate
-           Activates: the eradicate @Nullable checker for Java annotations
-           (Conversely: --no-eradicate)           See also infer-analyze(1).
+           Activates: checker eradicate: The eradicate `@Nullable` checker
+           for Java annotations. (Conversely: --no-eradicate)           See also infer-analyze(1).
 
        --eradicate-only
-           Activates: Enable --eradicate and disable all other checkers
+           Activates: Enable eradicate and disable all other checkers
            (Conversely: --no-eradicate-only)           See also infer-analyze(1).
 
        --external-java-packages +prefix
@@ -577,14 +584,18 @@ OPTIONS
            ndk-build, xcodebuild.           See also infer-capture(1) and infer-run(1).
 
        --no-fragment-retains-view
-           Deactivates: detects when Android fragments are not explicitly
-           nullified before becoming unreabable (Conversely:
-           --fragment-retains-view)           See also infer-analyze(1).
+           Deactivates: checker fragment-retains-view: Detects when Android
+           fragments are not explicitly nullified before becoming
+           unreachable. (Conversely: --fragment-retains-view)           See also infer-analyze(1).
 
        --fragment-retains-view-only
-           Activates: Enable --fragment-retains-view and disable all other
+           Activates: Enable fragment-retains-view and disable all other
            checkers (Conversely: --no-fragment-retains-view-only)       
     See also infer-analyze(1).
+
+       --from-json-costs-report costs-report.json
+           Load costs analysis results from a costs-report file.       
+    See also infer-report(1).
 
        --from-json-report report.json
            Load analysis results from a report file (default is to load the
@@ -605,21 +616,30 @@ OPTIONS
 
        --help
            Show this manual           See also infer-analyze(1), infer-capture(1), infer-compile(1),
-           infer-explore(1), infer-report(1), infer-reportdiff(1), and
-           infer-run(1).
+           infer-explore(1), infer-help(1), infer-report(1),
+           infer-reportdiff(1), and infer-run(1).
+
+       --help-checker +checker-id
+           Show information about a checker, for example biabduction. To see
+           the list of all checkers, see --list-checkers.           See also infer-help(1).
 
        --help-format { auto | groff | pager | plain }
            Show this help in the specified format. auto sets the format to
            plain if the environment variable TERM is "dumb" or undefined, and
            to pager otherwise.           See also infer-analyze(1), infer-capture(1), infer-compile(1),
-           infer-explore(1), infer-report(1), infer-reportdiff(1), and
-           infer-run(1).
+           infer-explore(1), infer-help(1), infer-report(1),
+           infer-reportdiff(1), and infer-run(1).
 
        --help-full
            Show this manual with all internal options in the INTERNAL OPTIONS
            section           See also infer-analyze(1), infer-capture(1), infer-compile(1),
-           infer-explore(1), infer-report(1), infer-reportdiff(1), and
-           infer-run(1).
+           infer-explore(1), infer-help(1), infer-report(1),
+           infer-reportdiff(1), and infer-run(1).
+
+       --help-issue-type +UNIQUE_ID
+           Show information about an issue type, for example
+           NULL_DEREFERENCE. To see the list of all issue types, see
+           --list-issue-types.           See also infer-help(1).
 
        --no-hoisting-report-only-expensive
            Deactivates: [Hoisting] Report loop-invariant calls only when the
@@ -631,30 +651,33 @@ OPTIONS
     See also infer-explore(1).
 
        --immutable-cast
-           Activates: the detection of object cast from immutable type to
-           mutable type. For instance, it will detect cast from ImmutableList
-           to List, ImmutableMap to Map, and ImmutableSet to Set.
-           (Conversely: --no-immutable-cast)           See also infer-analyze(1).
+           Activates: checker immutable-cast: Detection of object cast from
+           immutable types to mutable types. For instance, it will detect
+           casts from `ImmutableList` to `List`, `ImmutableMap` to `Map`, and
+           `ImmutableSet` to `Set`. (Conversely: --no-immutable-cast)       
+    See also infer-analyze(1).
 
        --immutable-cast-only
-           Activates: Enable --immutable-cast and disable all other checkers
+           Activates: Enable immutable-cast and disable all other checkers
            (Conversely: --no-immutable-cast-only)           See also infer-analyze(1).
 
        --impurity
-           Activates: [EXPERIMENTAL] Impurity analysis (Conversely:
-           --no-impurity)           See also infer-analyze(1).
+           Activates: checker impurity: Detects functions with potential
+           side-effects. Same as "purity", but implemented on top of Pulse.
+           (Conversely: --no-impurity)           See also infer-analyze(1).
 
        --impurity-only
-           Activates: Enable --impurity and disable all other checkers
+           Activates: Enable impurity and disable all other checkers
            (Conversely: --no-impurity-only)           See also infer-analyze(1).
 
        --no-inefficient-keyset-iterator
-           Deactivates: Check for inefficient uses of keySet iterator that
-           access both the key and the value. (Conversely:
-           --inefficient-keyset-iterator)           See also infer-analyze(1).
+           Deactivates: checker inefficient-keyset-iterator: Check for
+           inefficient uses of iterators that iterate on keys then lookup
+           their values, instead of iterating on key-value pairs directly.
+           (Conversely: --inefficient-keyset-iterator)           See also infer-analyze(1).
 
        --inefficient-keyset-iterator-only
-           Activates: Enable --inefficient-keyset-iterator and disable all
+           Activates: Enable inefficient-keyset-iterator and disable all
            other checkers (Conversely: --no-inefficient-keyset-iterator-only)       
     See also infer-analyze(1).
 
@@ -697,8 +720,8 @@ OPTIONS
            together with --linters-developer-mode)           See also infer-capture(1).
 
        --no-linters
-           Deactivates: syntactic linters (Conversely: --linters)       
-    See also infer-analyze(1).
+           Deactivates: checker linters: Declarative linting framework over
+           the Clang AST. (Conversely: --linters)           See also infer-analyze(1).
 
        --linters-def-file +file
            Specify the file containing linters definition (e.g. 'linters.al')       
@@ -726,7 +749,7 @@ OPTIONS
            (Conversely: --no-linters-ignore-clang-failures)           See also infer-capture(1).
 
        --linters-only
-           Activates: Enable --linters and disable all other checkers
+           Activates: Enable linters and disable all other checkers
            (Conversely: --no-linters-only)           See also infer-analyze(1).
 
        --linters-validate-syntax-only
@@ -734,18 +757,28 @@ OPTIONS
            in JSON format to stdout (Conversely:
            --no-linters-validate-syntax-only)           See also infer-capture(1).
 
+       --list-checkers
+           Activates: Show the list of all available checkers. (Conversely:
+           --no-list-checkers)           See also infer-help(1).
+
+       --list-issue-types
+           Activates: Show the list of all issue types that infer might
+           report. (Conversely: --no-list-issue-types)           See also infer-help(1).
+
        --litho-required-props
-           Activates: [EXPERIMENTAL] Required Prop check for Litho
-           (Conversely: --no-litho-required-props)           See also infer-analyze(1).
+           Activates: checker litho-required-props: Checks that all
+           non-option `@Prop`s have been specified when constructing Litho
+           components. (Conversely: --no-litho-required-props)       
+    See also infer-analyze(1).
 
        --litho-required-props-only
-           Activates: Enable --litho-required-props and disable all other
+           Activates: Enable litho-required-props and disable all other
            checkers (Conversely: --no-litho-required-props-only)       
     See also infer-analyze(1).
 
        --no-liveness
-           Deactivates: the detection of dead stores and unused variables
-           (Conversely: --liveness)           See also infer-analyze(1).
+           Deactivates: checker liveness: Detection of dead stores and unused
+           variables. (Conversely: --liveness)           See also infer-analyze(1).
 
        --liveness-dangerous-classes json
            Specify classes where the destructor should be ignored when
@@ -755,7 +788,7 @@ OPTIONS
            not read explicitly by the program.           See also infer-analyze(1).
 
        --liveness-only
-           Activates: Enable --liveness and disable all other checkers
+           Activates: Enable liveness and disable all other checkers
            (Conversely: --no-liveness-only)           See also infer-analyze(1).
 
        --load-average,-l float
@@ -763,11 +796,12 @@ OPTIONS
            that specified (Buck and make only)           See also infer-capture(1).
 
        --loop-hoisting
-           Activates: checker for loop-hoisting (Conversely:
-           --no-loop-hoisting)           See also infer-analyze(1).
+           Activates: checker loop-hoisting: Detect opportunities to hoist
+           function calls that are invariant outside of loop bodies for
+           efficiency. (Conversely: --no-loop-hoisting)           See also infer-analyze(1).
 
        --loop-hoisting-only
-           Activates: Enable --loop-hoisting and disable all other checkers
+           Activates: Enable loop-hoisting and disable all other checkers
            (Conversely: --no-loop-hoisting-only)           See also infer-analyze(1).
 
        --max-nesting int
@@ -787,8 +821,12 @@ OPTIONS
            See also infer-analyze(1).
 
        --perf-profiler-data-file file
-           Specify the file containing perf profiler data to read       
+           DEPRECATED: Specify the file containing perf profiler data to read       
     See also infer-analyze(1).
+
+       --pmd-xml
+           Activates: Output issues in (PMD) XML format in
+           infer-out/report.xml (Conversely: --no-pmd-xml)           See also infer-run(1).
 
        --print-active-checkers
            Activates: Print the active checkers before starting the analysis
@@ -800,13 +838,13 @@ OPTIONS
            infer-run(1).
 
        --printf-args
-           Activates: the detection of mismatch between the Java printf
-           format strings and the argument types For, example, this checker
-           will warn about the type error in `printf("Hello %d", "world")`
-           (Conversely: --no-printf-args)           See also infer-analyze(1).
+           Activates: checker printf-args: Detect mismatches between the Java
+           `printf` format strings and the argument types For example, this
+           checker will warn about the type error in `printf("Hello %d",
+           "world")` (Conversely: --no-printf-args)           See also infer-analyze(1).
 
        --printf-args-only
-           Activates: Enable --printf-args and disable all other checkers
+           Activates: Enable printf-args and disable all other checkers
            (Conversely: --no-printf-args-only)           See also infer-analyze(1).
 
        --procedures
@@ -859,30 +897,55 @@ OPTIONS
            infer-run(1).
 
        --pulse
-           Activates: [EXPERIMENTAL] C++ lifetime analysis (Conversely:
-           --no-pulse)           See also infer-analyze(1).
+           Activates: checker pulse: Memory and lifetime analysis.
+           (Conversely: --no-pulse)           See also infer-analyze(1).
+
+       --pulse-cut-to-one-path-procedures-pattern string
+           Regex of methods for which pulse will only explore one path. Can
+           be used on pathologically large procedures to prevent too-big
+           states from being produced.           See also infer-analyze(1).
+
+       --pulse-model-abort +string
+           Methods that should be modelled as abort in Pulse           See also infer-analyze(1).
+
+       --pulse-model-alloc-pattern string
+           Regex of methods that should be modelled as allocs in Pulse       
+    See also infer-analyze(1).
+
+       --pulse-model-release-pattern string
+           Regex of methods that should be modelled as release in Pulse       
+    See also infer-analyze(1).
+
+       --pulse-model-transfer-ownership +string
+           Methods that should be modelled as transfering memory ownership in
+           Pulse. Accepted formats are method or namespace::method       
+    See also infer-analyze(1).
 
        --pulse-only
-           Activates: Enable --pulse and disable all other checkers
+           Activates: Enable pulse and disable all other checkers
            (Conversely: --no-pulse-only)           See also infer-analyze(1).
 
        --purity
-           Activates: [EXPERIMENTAL] Purity analysis (Conversely:
+           Activates: checker purity: Detects pure (side-effect-free)
+           functions. A different implementation of "impurity". (Conversely:
            --no-purity)           See also infer-analyze(1).
 
        --purity-only
-           Activates: Enable --purity and disable all other checkers
+           Activates: Enable purity and disable all other checkers
            (Conversely: --no-purity-only)           See also infer-analyze(1).
 
        --quandary
-           Activates: the quandary taint analysis (Conversely: --no-quandary)       
-    See also infer-analyze(1).
+           Activates: checker quandary: The Quandary taint analysis detects
+           flows of values between sources and sinks, except if the value
+           went through a "sanitizer". In addition to some defaults, users
+           can specify their own sources, sinks, and sanitizers functions.
+           (Conversely: --no-quandary)           See also infer-analyze(1).
 
        --quandary-endpoints json
            Specify endpoint classes for Quandary           See also infer-analyze(1).
 
        --quandary-only
-           Activates: Enable --quandary and disable all other checkers
+           Activates: Enable quandary and disable all other checkers
            (Conversely: --no-quandary-only)           See also infer-analyze(1).
 
        --quandary-sanitizers json
@@ -899,7 +962,7 @@ OPTIONS
            --no-quiet | -Q)           See also infer-analyze(1) and infer-report(1).
 
        --no-racerd
-           Deactivates: the RacerD thread safety analysis (Conversely:
+           Deactivates: checker racerd: Thread safety analysis. (Conversely:
            --racerd)           See also infer-analyze(1).
 
        --racerd-guardedby
@@ -907,17 +970,17 @@ OPTIONS
            --no-racerd-guardedby)           See also infer-analyze(1).
 
        --racerd-only
-           Activates: Enable --racerd and disable all other checkers
+           Activates: Enable racerd and disable all other checkers
            (Conversely: --no-racerd-only)           See also infer-analyze(1).
 
+       --no-racerd-unknown-returns-owned
+           Deactivates: DEPRECATED, does nothing. (Conversely:
+           --racerd-unknown-returns-owned)           See also infer-analyze(1).
+           
        --racerdfix-only
            Activates: Enable --racerdfix and disable all other checkers
            (Conversely: --no-racerdfix-only)           See also infer-analyze(1).
 
-       --racerd-unknown-returns-owned
-           Activates: Assume that all methods without a CFG (including
-           abstract methods) return owned objects (Conversely:
-           --no-racerd-unknown-returns-owned)           See also infer-analyze(1).
 
        --reactive,-r
            Activates: Reactive mode: the analysis starts from the files
@@ -971,17 +1034,20 @@ OPTIONS
        --select N
            Select bug number N. If omitted, prompt for input.           See also infer-explore(1).
 
-       --no-self_in_block
-           Deactivates: checker to flag incorrect uses of when Objective-C
-           blocks capture self (Conversely: --self_in_block)           See also infer-analyze(1).
+       --no-self-in-block
+           Deactivates: checker self-in-block: An Objective-C-specific
+           analysis to detect when a block captures `self`. (Conversely:
+           --self-in-block)           See also infer-analyze(1).
 
-       --self_in_block-only
-           Activates: Enable --self_in_block and disable all other checkers
-           (Conversely: --no-self_in_block-only)           See also infer-analyze(1).
+       --self-in-block-only
+           Activates: Enable self-in-block and disable all other checkers
+           (Conversely: --no-self-in-block-only)           See also infer-analyze(1).
 
        --no-siof
-           Deactivates: the Static Initialization Order Fiasco analysis (C++
-           only) (Conversely: --siof)           See also infer-analyze(1).
+           Deactivates: checker siof: Catches Static Initialization Order
+           Fiascos in C++, that can lead to subtle,
+           compiler-version-dependent errors. (Conversely: --siof)       
+    See also infer-analyze(1).
 
        --siof-check-iostreams
            Activates: Do not assume that iostreams (cout, cerr, ...) are
@@ -991,8 +1057,8 @@ OPTIONS
            option on. (Conversely: --no-siof-check-iostreams)           See also infer-analyze(1).
 
        --siof-only
-           Activates: Enable --siof and disable all other checkers
-           (Conversely: --no-siof-only)           See also infer-analyze(1).
+           Activates: Enable siof and disable all other checkers (Conversely:
+           --no-siof-only)           See also infer-analyze(1).
 
        --siof-safe-methods +string
            Methods that are SIOF-safe; "foo::bar" will match "foo::bar()",
@@ -1063,23 +1129,33 @@ OPTIONS
            65536.           See also infer-analyze(1), infer-capture(1), and infer-run(1).
 
        --no-starvation
-           Deactivates: starvation analysis (Conversely: --starvation)       
-    See also infer-analyze(1).
+           Deactivates: checker starvation: Detect various kinds of
+           situations when no progress is being made because of concurrency
+           errors. (Conversely: --starvation)           See also infer-analyze(1).
 
        --starvation-only
-           Activates: Enable --starvation and disable all other checkers
+           Activates: Enable starvation and disable all other checkers
            (Conversely: --no-starvation-only)           See also infer-analyze(1).
 
        --threadsafe-aliases json
            Specify custom annotations that should be considered aliases of
            @ThreadSafe           See also infer-analyze(1).
 
+       --topl
+           Activates: checker topl: Detects errors based on user-provided
+           state machines describing multi-object monitors. (Conversely:
+           --no-topl)           See also infer-analyze(1).
+
+       --topl-only
+           Activates: Enable topl and disable all other checkers (Conversely:
+           --no-topl-only)           See also infer-analyze(1).
+
        --no-uninit
-           Deactivates: checker for use of uninitialized values (Conversely:
-           --uninit)           See also infer-analyze(1).
+           Deactivates: checker uninit: Warns when values are used before
+           having been initialized. (Conversely: --uninit)           See also infer-analyze(1).
 
        --uninit-only
-           Activates: Enable --uninit and disable all other checkers
+           Activates: Enable uninit and disable all other checkers
            (Conversely: --no-uninit-only)           See also infer-analyze(1).
 
        --unsafe-malloc
@@ -1091,6 +1167,12 @@ OPTIONS
 
        --version-json
            Print version information in json format and exit           See also infer-run(1).
+
+       --write-website path_to_website_dir
+           Use to write website files documenting issue types and checkers
+           under path_to_website_dir/. Meant to be used within the Infer
+           directory to generate its website at fbinfer.com at website/.       
+    See also infer-help(1).
 
        --Xbuck +string
            Pass values as command-line arguments to invocations of `buck
@@ -1137,10 +1219,6 @@ INTERNAL OPTIONS
            Activates: Forget leaked memory during abstraction (Conversely:
            --no-allow-leak)
 
-       --analysis-stops
-           Activates: Issue a warning when the analysis stops (Conversely:
-           --no-analysis-stops)
-
        --append-buck-flavors-reset
            Set --append-buck-flavors to the empty list.
 
@@ -1159,14 +1237,8 @@ INTERNAL OPTIONS
            /my/source/File.java with project root /my/root into
            ../source/File.java
 
-       --biabduction-fallback-model-alloc-pattern-reset
-           Cancel the effect of --biabduction-fallback-model-alloc-pattern.
-
-       --biabduction-fallback-model-free-pattern-reset
-           Cancel the effect of --biabduction-fallback-model-free-pattern.
-
        --biabduction-models-mode
-           Activates: Mode for analyzing the biabduction models (Conversely:
+           Activates: Analysis of the biabduction models (Conversely:
            --no-biabduction-models-mode)
 
        --bo-field-depth-limit-reset
@@ -1261,12 +1333,6 @@ INTERNAL OPTIONS
        --clang-libcxx-include-to-override-regex-reset
            Cancel the effect of --clang-libcxx-include-to-override-regex.
 
-       --class-loads-roots +string
-           Report class loads of this list of Java methods
-
-       --class-loads-roots-reset
-           Set --class-loads-roots to the empty list.
-
        --classpath string
            Specify the Java classpath
 
@@ -1278,6 +1344,9 @@ INTERNAL OPTIONS
 
        --compilation-database-reset
            Set --compilation-database to the empty list.
+
+       --cost-issues-tests-reset
+           Cancel the effect of --cost-issues-tests.
 
        --costs-current-reset
            Cancel the effect of --costs-current.
@@ -1350,9 +1419,6 @@ INTERNAL OPTIONS
            test-determinator. It is used together with the --modified-lines.
            (Conversely: --no-export-changed-functions)
 
-       --export-changed-functions-output path
-           Name of file for export-changed-functions results
-
        --external-java-packages-reset
            Set --external-java-packages to the empty list.
 
@@ -1376,6 +1442,9 @@ INTERNAL OPTIONS
        --force-integration-reset
            Cancel the effect of --force-integration.
 
+       --from-json-costs-report-reset
+           Cancel the effect of --from-json-costs-report.
+
        --from-json-report-reset
            Cancel the effect of --from-json-report.
 
@@ -1393,6 +1462,12 @@ INTERNAL OPTIONS
        --genrule-mode
            Activates: Enable the genrule compatibility mode used for the Buck
            integration (Conversely: --no-genrule-mode)
+
+       --help-checker-reset
+           Set --help-checker to the empty list.
+
+       --help-issue-type-reset
+           Set --help-issue-type to the empty list.
 
        --help-scrubbed
            Show this manual without specifying default values induced by the
@@ -1432,6 +1507,13 @@ INTERNAL OPTIONS
            expressed as a multiple of symbolic operations and a multiple of
            seconds of elapsed time
 
+       --java-debug-source-file-info path
+           For debugging only: Call the Java declarations source file parser
+           on the given file and do not run anything else.
+
+       --java-debug-source-file-info-reset
+           Cancel the effect of --java-debug-source-file-info.
+
        --java-jar-compiler-reset
            Cancel the effect of --java-jar-compiler.
 
@@ -1464,9 +1546,6 @@ INTERNAL OPTIONS
 
        --load-average-reset
            Cancel the effect of --load-average.
-
-       --log-file file
-           Specify the file to use for logging
 
        --margin int
            Set right margin for the pretty printing functions
@@ -1510,8 +1589,9 @@ INTERNAL OPTIONS
            Cancel the effect of --nullable-annotation-name.
 
        --nullsafe
-           Activates: [RESERVED] Reserved for nullsafe typechecker, use
-           --eradicate for now (Conversely: --no-nullsafe)
+           Activates: checker nullsafe: [RESERVED] Reserved for nullsafe
+           typechecker, use `--eradicate` for now. (Conversely:
+           --no-nullsafe)
 
        --nullsafe-disable-field-not-initialized-in-nonstrict-classes
            Activates: Nullsafe: In this mode field not initialized issues
@@ -1592,11 +1672,6 @@ INTERNAL OPTIONS
        --procedures-filter-reset
            Cancel the effect of --procedures-filter.
 
-       --procedures-per-process int
-           Specify the number of procedures to analyze per process when using
-           --per-procedure-parallelism. If 0 is specified, each file is
-           divided into --jobs groups of procedures.
-
        --process-clang-ast
            Activates: process the ast to emit some info about the file (Not
            available for Java) (Conversely: --no-process-clang-ast)
@@ -1608,6 +1683,14 @@ INTERNAL OPTIONS
        --profiler-samples-reset
            Cancel the effect of --profiler-samples.
 
+       --pudge
+           Activates: Experimental flag to enable sledge arithmetic on path
+           conditions. This is intended for Pulse development only and will
+           be removed once the feature is stable. (Conversely: --no-pudge)
+
+       --pulse-cut-to-one-path-procedures-pattern-reset
+           Cancel the effect of --pulse-cut-to-one-path-procedures-pattern.
+
        --pulse-intraprocedural-only
            Activates: Disable inter-procedural analysis in Pulse. Used for
            experimentations only. (Conversely:
@@ -1616,16 +1699,28 @@ INTERNAL OPTIONS
        --pulse-max-disjuncts int
            Under-approximate after int disjunctions in the domain
 
+       --pulse-model-abort-reset
+           Set --pulse-model-abort to the empty list.
+
+       --pulse-model-alloc-pattern-reset
+           Cancel the effect of --pulse-model-alloc-pattern.
+
+       --pulse-model-release-pattern-reset
+           Cancel the effect of --pulse-model-release-pattern.
+
+       --pulse-model-transfer-ownership-reset
+           Set --pulse-model-transfer-ownership to the empty list.
+
+       --pulse-recency-limit int
+           Maximum number of array elements and structure fields to keep
+           track of for a given array address.
+
        --pulse-widen-threshold int
            Under-approximate after int loop iterations
 
        --pure-by-default
            Activates: [Purity]Consider unknown functions to be pure by
            default (Conversely: --no-pure-by-default)
-
-       --reactive-capture
-           Activates: Compile source files only when required by analyzer
-           (clang only) (Conversely: --no-reactive-capture)
 
        --reanalyze
            Activates: Rerun the analysis. Not compatible with
@@ -1661,6 +1756,10 @@ INTERNAL OPTIONS
        --reset-linters-def-folder
            Reset the list of folders containing linters definitions to be
            empty (see linters-def-folder).
+
+       --resource-leak-lab
+           Activates: checker resource-leak-lab: (Conversely:
+           --no-resource-leak-lab)
 
        --scheduler { file | restart | callgraph }
            Specify the scheduler used for the analysis phase
@@ -1703,6 +1802,11 @@ INTERNAL OPTIONS
 
        --skip-translation-headers-reset
            Set --skip-translation-headers to the empty list.
+
+       --sledge-timers
+           Activates: Enable debug timing info from sledge on stderr (you
+           probably want --no-progress-bar as well). (Conversely:
+           --no-sledge-timers)
 
        --source-files-filter-reset
            Cancel the effect of --source-files-filter.
@@ -1761,9 +1865,6 @@ INTERNAL OPTIONS
            which specify the relevant arguments. (Conversely:
            --no-test-determinator)
 
-       --test-determinator-output path
-           Name of file for test-determinator results
-
        --test-filtering
            Activates: List all the files Infer can report on (should be
            called from the root of the project) (Conversely:
@@ -1821,10 +1922,6 @@ INTERNAL OPTIONS
            Activates: Run uninit check in the experimental interprocedural
            mode (Conversely: --no-uninit-interproc)
 
-       --use-cost-threshold
-           Activates: Emit costs issues by comparing costs with a set
-           threshold (Conversely: --no-use-cost-threshold)
-
        --version-vcs
            Print version control system commit and exit
 
@@ -1840,10 +1937,14 @@ INTERNAL OPTIONS
            (Conversely: --no-write-html)
 
        --write-html-whitelist-regex +string
-           whitelist files that will have its html debug output printed
+           Whitelist files that will have their html debug output printed
+           when --html is true.
 
        --write-html-whitelist-regex-reset
            Set --write-html-whitelist-regex to the empty list.
+
+       --write-website-reset
+           Cancel the effect of --write-website.
 
        --Xbuck-no-inline-reset
            Set --Xbuck-no-inline to the empty list.
@@ -1902,7 +2003,8 @@ FILES
 
 SEE ALSO
        infer-analyze(1), infer-capture(1), infer-compile(1),
-       infer-explore(1), infer-report(1), infer-reportdiff(1), infer-run(1)
+       infer-explore(1), infer-help(1), infer-report(1), infer-reportdiff(1),
+       infer-run(1)
 
 
 

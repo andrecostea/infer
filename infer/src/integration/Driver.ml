@@ -18,6 +18,7 @@ type mode =
   | Analyze
   | Ant of {prog: string; args: string list}
   | BuckClangFlavor of {build_cmd: string list}
+  | BuckCombinedGenrule of {build_cmd: string list}
   | BuckCompilationDB of {deps: BuckMode.clang_compilation_db_deps; prog: string; args: string list}
   | BuckGenrule of {prog: string}
   | BuckGenruleMaster of {build_cmd: string list}
@@ -39,6 +40,8 @@ let pp_mode fmt = function
       F.fprintf fmt "Ant driver mode:@\nprog = '%s'@\nargs = %a" prog Pp.cli_args args
   | BuckClangFlavor {build_cmd} ->
       F.fprintf fmt "BuckClangFlavor driver mode: build_cmd = %a" Pp.cli_args build_cmd
+  | BuckCombinedGenrule {build_cmd} ->
+      F.fprintf fmt "BuckCombinedGenrule driver mode: build_cmd = %a" Pp.cli_args build_cmd
   | BuckCompilationDB {deps; prog; args} ->
       F.fprintf fmt "BuckCompilationDB driver mode:@\nprog = '%s'@\nargs = %a@\ndeps = %a" prog
         Pp.cli_args args BuckMode.pp_clang_compilation_db_deps deps
@@ -77,7 +80,7 @@ let clean_compilation_command mode =
 
 
 let reset_duplicates_file () =
-  let start = Config.results_dir ^/ Config.duplicates_filename in
+  let start = ResultsDir.get_path DuplicateFunctions in
   let delete () = Unix.unlink start in
   let create () =
     Unix.close (Unix.openfile ~perm:0o0666 ~mode:[Unix.O_CREAT; Unix.O_WRONLY] start)
@@ -110,42 +113,6 @@ let capture_with_compilation_database db_files =
   CaptureCompilationDatabase.capture_files_in_database compilation_database
 
 
-let buck_capture build_cmd =
-  let prog_build_cmd_opt =
-    let prog, buck_args = (List.hd_exn build_cmd, List.tl_exn build_cmd) in
-    match Config.buck_mode with
-    | Some ClangFlavors ->
-        (* let children infer processes know that they are inside Buck *)
-        let infer_args_with_buck =
-          String.concat
-            ~sep:(String.of_char CLOpt.env_var_sep)
-            (Option.to_list (Sys.getenv CLOpt.args_env_var) @ ["--buck"])
-        in
-        Unix.putenv ~key:CLOpt.args_env_var ~data:infer_args_with_buck ;
-        let {Buck.command; rev_not_targets; targets} =
-          Buck.add_flavors_to_buck_arguments ClangFlavors ~filter_kind:`Auto ~extra_flavors:[]
-            buck_args
-        in
-        if List.is_empty targets then None
-        else
-          let all_args = List.rev_append rev_not_targets targets in
-          let updated_buck_cmd =
-            command
-            :: List.rev_append Config.buck_build_args_no_inline (Buck.store_args_in_file all_args)
-          in
-          Logging.(debug Capture Quiet)
-            "Processed buck command '%a'@\n" (Pp.seq F.pp_print_string) updated_buck_cmd ;
-          Some (prog, updated_buck_cmd)
-    | _ ->
-        Some (prog, build_cmd)
-  in
-  Option.iter prog_build_cmd_opt ~f:(fun (prog, buck_build_cmd) ->
-      L.progress "Capturing in buck mode...@." ;
-      if Option.exists ~f:BuckMode.is_clang_flavors Config.buck_mode then (
-        RunState.set_merge_capture true ; RunState.store () ) ;
-      Buck.clang_flavor_capture ~prog ~buck_build_cmd )
-
-
 let capture ~changed_files = function
   | Analyze ->
       ()
@@ -153,7 +120,11 @@ let capture ~changed_files = function
       L.progress "Capturing in ant mode...@." ;
       Ant.capture ~prog ~args
   | BuckClangFlavor {build_cmd} ->
-      buck_capture build_cmd
+      L.progress "Capturing in buck mode...@." ;
+      BuckFlavors.capture build_cmd
+  | BuckCombinedGenrule {build_cmd} ->
+      L.progress "Capturing in buck combined genrule mode...@." ;
+      BuckGenrule.capture CombinedGenrule build_cmd
   | BuckCompilationDB {deps; prog; args} ->
       L.progress "Capturing using Buck's compilation database...@." ;
       let json_cdb =
@@ -165,7 +136,7 @@ let capture ~changed_files = function
       JMain.from_arguments prog
   | BuckGenruleMaster {build_cmd} ->
       L.progress "Capturing for BuckGenruleMaster integration...@." ;
-      BuckGenrule.capture build_cmd
+      BuckGenrule.capture JavaGenruleMaster build_cmd
   | Clang {compiler; prog; args} ->
       if CLOpt.is_originator then L.progress "Capturing in make/cc mode...@." ;
       Clang.capture compiler ~prog ~args
@@ -214,8 +185,8 @@ let execute_analyze ~changed_files =
 
 
 let report ?(suppress_console = false) () =
-  let issues_json = Config.(results_dir ^/ report_json) in
-  JsonReports.write_reports ~issues_json ~costs_json:Config.(results_dir ^/ costs_report_json) ;
+  let issues_json = ResultsDir.get_path ReportJson in
+  JsonReports.write_reports ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
   (* Post-process the report according to the user config. By default, calls report.py to create a
      human-readable report.
 
@@ -226,9 +197,10 @@ let report ?(suppress_console = false) () =
         Out_channel.output_string outc "The contents of this file have moved to report.txt.\n" ) ;
     TextReport.create_from_json
       ~quiet:(Config.quiet || suppress_console)
-      ~console_limit:Config.report_console_limit
-      ~report_txt:Config.(results_dir ^/ report_txt)
-      ~report_json:issues_json ) ;
+      ~console_limit:Config.report_console_limit ~report_txt:(ResultsDir.get_path ReportText)
+      ~report_json:issues_json ;
+    if Config.pmd_xml then
+      XMLReport.write ~xml_path:(ResultsDir.get_path ReportXML) ~json_path:issues_json ) ;
   if Config.(test_determinator && process_clang_ast) then
     TestDeterminator.merge_test_determinator_results () ;
   ()
@@ -266,7 +238,7 @@ let analyze_and_report ?suppress_console_report ~changed_files mode =
     | _ when Config.infer_is_clang || Config.infer_is_javac ->
         (* Called from another integration to do capture only. *)
         (false, false)
-    | (Capture | Compile | Explore | Report | ReportDiff), _ ->
+    | (Capture | Compile | Explore | Help | Report | ReportDiff), _ ->
         (false, false)
     | (Analyze | Run), _ ->
         (true, true)
@@ -282,21 +254,20 @@ let analyze_and_report ?suppress_console_report ~changed_files mode =
            && InferCommand.equal Run Config.command ->
         (* if doing capture + analysis of buck with flavors, we always need to merge targets before the analysis phase *)
         true
-    | Analyze | BuckGenruleMaster _ ->
-        RunState.get_merge_capture ()
+    | Analyze | BuckGenruleMaster _ | BuckCombinedGenrule _ ->
+        ResultsDir.RunState.get_merge_capture ()
     | _ ->
         false
   in
   if should_merge then (
     if Config.export_changed_functions then MergeCapture.merge_changed_functions () ;
     MergeCapture.merge_captured_targets () ;
-    RunState.set_merge_capture false ;
-    RunState.store () ) ;
+    ResultsDir.RunState.set_merge_capture false ) ;
   if should_analyze then
     if SourceFiles.is_empty () && Config.capture then error_nothing_to_analyze mode
     else (
       execute_analyze ~changed_files ;
-      if Config.starvation_whole_program then Starvation.whole_program_analysis () ) ;
+      if Config.starvation_whole_program then StarvationGlobalAnalysis.whole_program_analysis () ) ;
   if should_report && Config.report then report ?suppress_console:suppress_console_report ()
 
 
@@ -307,9 +278,7 @@ let analyze_and_report ?suppress_console_report ~changed_files mode =
 
 (** as the Config.fail_on_bug flag mandates, exit with error when an issue is reported *)
 let fail_on_issue_epilogue () =
-  let issues_json =
-    DB.Results_dir.(path_to_filename Abs_root [Config.report_json]) |> DB.filename_to_string
-  in
+  let issues_json = ResultsDir.get_path ReportJson in
   match Utils.read_file issues_json with
   | Ok lines ->
       let issues = Jsonbug_j.report_of_string @@ String.concat ~sep:"" lines in
@@ -324,6 +293,8 @@ let assert_supported_mode required_analyzer requested_mode_string =
     match required_analyzer with
     | `Clang ->
         Version.clang_enabled
+    | `ClangJava ->
+        Version.clang_enabled && Version.java_enabled
     | `Java ->
         Version.java_enabled
     | `Xcode ->
@@ -334,6 +305,8 @@ let assert_supported_mode required_analyzer requested_mode_string =
       match required_analyzer with
       | `Clang ->
           "clang"
+      | `ClangJava ->
+          "clang & java"
       | `Java ->
           "java"
       | `Xcode ->
@@ -365,6 +338,8 @@ let assert_supported_build_system build_system =
         match Config.buck_mode with
         | None ->
             error_no_buck_mode_specified ()
+        | Some CombinedGenrule ->
+            (`ClangJava, "buck combined genrule")
         | Some ClangFlavors ->
             (`Clang, "buck with flavors")
         | Some (ClangCompilationDB _) ->
@@ -396,6 +371,8 @@ let mode_of_build_command build_cmd (buck_mode : BuckMode.t option) =
           Ant {prog; args}
       | BBuck, None ->
           error_no_buck_mode_specified ()
+      | BBuck, Some CombinedGenrule ->
+          BuckCombinedGenrule {build_cmd}
       | BBuck, Some (ClangCompilationDB deps) ->
           BuckCompilationDB {deps; prog; args= List.append args (List.rev Config.buck_build_args)}
       | BBuck, Some ClangFlavors when Config.is_checker_enabled Linters ->

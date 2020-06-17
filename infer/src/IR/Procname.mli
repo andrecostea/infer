@@ -218,20 +218,24 @@ val is_java_access_method : t -> bool
 
 val is_java_class_initializer : t -> bool
 
+val is_java_anonymous_inner_class_method : t -> bool
+
+val is_java_autogen_method : t -> bool
+
 val is_objc_method : t -> bool
 
-module Hash : Caml.Hashtbl.S with type key = t
 (** Hash tables with proc names as keys. *)
+module Hash : Caml.Hashtbl.S with type key = t
 
 module LRUHash : LRUHashtbl.S with type key = t
 
 module HashQueue : Hash_queue.S with type key = t
 
-module Map : PrettyPrintable.PPMap with type key = t
 (** Maps from proc names. *)
+module Map : PrettyPrintable.PPMap with type key = t
 
-module Set : PrettyPrintable.PPSet with type elt = t
 (** Sets of proc names. *)
+module Set : PrettyPrintable.PPSet with type elt = t
 
 module SQLite : sig
   val serialize : t -> Sqlite3.Data.t
@@ -258,6 +262,10 @@ val make_java :
   -> t
 (** Create a Java procedure name. *)
 
+val make_objc_dealloc : Typ.Name.t -> t
+(** Create a Objective-C dealloc name. This is a destructor for an Objective-C class. This procname
+    is given by the class name, since it is always an instance method with the name "dealloc" *)
+
 val empty_block : t
 (** Empty block name. *)
 
@@ -269,6 +277,9 @@ val get_method : t -> string
 
 val is_objc_block : t -> bool
 (** Return whether the procname is a block procname. *)
+
+val is_objc_dealloc : t -> bool
+(** Return whether the dealloc method of an Objective-C class. *)
 
 val is_c_method : t -> bool
 (** Return true this is an Objective-C/C++ method name. *)

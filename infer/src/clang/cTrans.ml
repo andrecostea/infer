@@ -2557,7 +2557,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
 
 
   (** Cast expression are treated the same apart from the cast operation kind *)
-  and cast_exprs_trans trans_state stmt_info stmt_list expr_info cast_expr_info =
+  and cast_exprs_trans trans_state stmt_info stmt_list expr_info ?objc_bridge_cast_kind
+      cast_expr_info =
     let context = trans_state.context in
     L.(debug Capture Verbose)
       "  priority node free = '%s'@\n@."
@@ -2576,7 +2577,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let cast_kind = cast_expr_info.Clang_ast_t.cei_cast_kind in
     let exp_typ = res_trans_stmt.return in
     (* This gives the difference among cast operations kind *)
-    let cast_inst, cast_exp = cast_operation cast_kind exp_typ typ sil_loc in
+    let cast_inst, cast_exp = cast_operation ?objc_bridge_cast_kind cast_kind exp_typ typ sil_loc in
     { res_trans_stmt with
       control= {res_trans_stmt.control with instrs= res_trans_stmt.control.instrs @ cast_inst}
     ; return= cast_exp }
@@ -3216,8 +3217,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let field_exp = Exp.Lfield (ret_exp, field_name, typ) in
     let args =
       type_info_objc :: (field_exp, void_typ)
-      :: Option.value_map ~default:[] res_trans_subexpr ~f:(fun trans_result -> [trans_result.return]
-         )
+      :: Option.value_map ~default:[] res_trans_subexpr ~f:(fun trans_result ->
+             [trans_result.return] )
     in
     let call_instr = Sil.Call ((ret_id, typ), sil_fun, args, sil_loc, CallFlags.default) in
     let res_control = {empty_control with instrs= [call_instr]} in
@@ -3245,11 +3246,13 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let trans_state_param = {trans_state_pri with succ_nodes= []} in
     let res_trans_subexpr_list = List.map ~f:(instruction trans_state_param) stmts in
     let params = collect_returns res_trans_subexpr_list in
-    let sil_fun = Exp.Const (Const.Cfun BuiltinDecl.__infer_skip_function) in
     let ret_id = Ident.create_fresh Ident.knormal in
     let ret_exp = Exp.Var ret_id in
-    let call_instr = Sil.Call ((ret_id, typ), sil_fun, params, sil_loc, CallFlags.default) in
-    let res_trans_call = mk_trans_result (ret_exp, typ) {empty_control with instrs= [call_instr]} in
+    let res_instr =
+      let sil_fun = Exp.Const (Const.Cfun BuiltinDecl.__infer_initializer_list) in
+      Sil.Call ((ret_id, typ), sil_fun, params, sil_loc, CallFlags.default)
+    in
+    let res_trans_call = mk_trans_result (ret_exp, typ) {empty_control with instrs= [res_instr]} in
     let all_res_trans = res_trans_subexpr_list @ [res_trans_call] in
     PriorityNode.compute_results_to_parent trans_state_pri sil_loc
       ~node_name:CXXStdInitializerListExpr stmt_info ~return:res_trans_call.return all_res_trans
@@ -3528,7 +3531,6 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         pseudoObjectExpr_trans trans_state stmt_list
     | UnaryExprOrTypeTraitExpr (_, _, _, unary_expr_or_type_trait_expr_info) ->
         unaryExprOrTypeTraitExpr_trans trans_state unary_expr_or_type_trait_expr_info
-    | ObjCBridgedCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | ImplicitCastExpr (stmt_info, stmt_list, expr_info, cast_kind)
     | BuiltinBitCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | CStyleCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
@@ -3537,6 +3539,9 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | CXXStaticCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _, _)
     | CXXFunctionalCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _) ->
         cast_exprs_trans trans_state stmt_info stmt_list expr_info cast_kind
+    | ObjCBridgedCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _, objc_bridge_cast_ei) ->
+        let objc_bridge_cast_kind = objc_bridge_cast_ei.Clang_ast_t.obcei_cast_kind in
+        cast_exprs_trans trans_state stmt_info stmt_list expr_info ~objc_bridge_cast_kind cast_kind
     | IntegerLiteral (_, _, expr_info, integer_literal_info) ->
         integerLiteral_trans trans_state expr_info integer_literal_info
     | OffsetOfExpr (stmt_info, _, expr_info, offset_of_expr_info) ->

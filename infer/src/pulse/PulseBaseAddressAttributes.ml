@@ -12,7 +12,7 @@ open PulseBasicInterface
 module AttributesNoRank = struct
   include Attributes
 
-  let pp fmt t : unit = PulseAttribute.Attributes.pp fmt t
+  let pp fmt t : unit = Attributes.pp ?print_rank:None fmt t
 end
 
 module Graph = PrettyPrintable.MakePPMonoMap (AbstractValue) (AttributesNoRank)
@@ -25,6 +25,15 @@ let add_one addr attribute attrs =
       Graph.add addr (Attributes.singleton attribute) attrs
   | Some old_attrs ->
       let new_attrs = Attributes.add old_attrs attribute in
+      Graph.add addr new_attrs attrs
+
+
+let remove_one addr attribute attrs =
+  match Graph.find_opt addr attrs with
+  | None ->
+      attrs
+  | Some old_attrs ->
+      let new_attrs = Attributes.remove attribute old_attrs in
       Graph.add addr new_attrs attrs
 
 
@@ -45,7 +54,11 @@ let empty = Graph.empty
 
 let filter = Graph.filter
 
-let partition = Graph.partition
+let filter_with_discarded_addrs f x =
+  fold
+    (fun k v ((x, discarded) as acc) -> if f k v then acc else (Graph.remove k x, k :: discarded))
+    x (x, [])
+
 
 let pp = Graph.pp
 
@@ -56,6 +69,8 @@ let invalidate (address, history) invalidation location memory =
 let allocate procname (address, history) location memory =
   add_one address (Attribute.Allocated (procname, Immediate {location; history})) memory
 
+
+let add_dynamic_type typ address memory = add_one address (Attribute.DynamicType typ) memory
 
 let check_valid address attrs =
   L.d_printfln "Checking validity of %a" AbstractValue.pp address ;
@@ -71,21 +86,24 @@ let get_attribute getter address attrs =
   Graph.find_opt address attrs >>= getter
 
 
-let get_closure_proc_name = get_attribute Attributes.get_closure_proc_name
-
-let get_citv = get_attribute Attributes.get_citv
-
-let get_bo_itv v memory =
-  match get_attribute Attributes.get_bo_itv v memory with
+let remove_allocation_attr address memory =
+  match get_attribute Attributes.get_allocation address memory with
+  | Some (procname, trace) ->
+      remove_one address (Attribute.Allocated (procname, trace)) memory
   | None ->
-      Itv.ItvPure.of_pulse_value v
-  | Some itv ->
-      itv
+      memory
 
+
+let get_closure_proc_name = get_attribute Attributes.get_closure_proc_name
 
 let get_must_be_valid = get_attribute Attributes.get_must_be_valid
 
 let std_vector_reserve address memory = add_one address Attribute.StdVectorReserve memory
+
+let is_end_iterator address attrs =
+  let invalid_attrs = get_attribute Attributes.get_invalid address attrs in
+  match invalid_attrs with Some (EndIterator, _) -> true | _ -> false
+
 
 let is_std_vector_reserved address attrs =
   Graph.find_opt address attrs

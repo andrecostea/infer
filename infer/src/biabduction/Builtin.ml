@@ -11,16 +11,14 @@ module L = Logging
 (** Module for builtin functions with their symbolic execution handler *)
 
 type args =
-  { summary: Summary.t
-  ; instr: Sil.instr
-  ; tenv: Tenv.t
+  { instr: Sil.instr
   ; prop_: Prop.normal Prop.t
   ; path: Paths.Path.t
   ; ret_id_typ: Ident.t * Typ.t
   ; args: (Exp.t * Typ.t) list
   ; proc_name: Procname.t
   ; loc: Location.t
-  ; exe_env: Exe_env.t }
+  ; analysis_data: BiabductionSummary.t InterproceduralAnalysis.t }
 
 type ret_typ = (Prop.normal Prop.t * Paths.Path.t) list
 
@@ -40,7 +38,9 @@ let check_register_populated () =
 (** get the symbolic execution handler associated to the builtin function name *)
 let get name : t option =
   try Some (Procname.Hash.find builtin_functions name)
-  with Caml.Not_found -> check_register_populated () ; None
+  with Caml.Not_found ->
+    check_register_populated () ;
+    None
 
 
 (** register a builtin [Procname.t] and symbolic execution handler *)

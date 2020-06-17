@@ -166,19 +166,20 @@ let path_set_checkout_todo (wl : Worklist.t) (node : Procdesc.Node.t) : Paths.Pa
 
 (* =============== END of the edge_set object =============== *)
 
-let collect_do_abstract_pre pname tenv (pset : Propset.t) : Propset.t =
+let collect_do_abstract_pre analysis_data (pset : Propset.t) : Propset.t =
   if !BiabductionConfig.footprint then
-    BiabductionConfig.run_in_re_execution_mode (Abs.lifted_abstract pname tenv) pset
-  else Abs.lifted_abstract pname tenv pset
+    BiabductionConfig.run_in_re_execution_mode (Abs.lifted_abstract analysis_data) pset
+  else Abs.lifted_abstract analysis_data pset
 
 
-let collect_do_abstract_post pname tenv (pathset : Paths.PathSet.t) : Paths.PathSet.t =
+let collect_do_abstract_post ({InterproceduralAnalysis.tenv; _} as analysis_data)
+    (pathset : Paths.PathSet.t) : Paths.PathSet.t =
   if !BiabductionConfig.footprint then
     L.die InternalError
       "Interproc.collect_do_abstract_post ignores the _fp part of propositions, so it should only \
        be used during re-execution." ;
   let abstract_o p =
-    if Prover.check_inconsistency tenv p then None else Some (Abs.abstract pname tenv p)
+    if Prover.check_inconsistency tenv p then None else Some (Abs.abstract analysis_data p)
   in
   Paths.PathSet.map_option abstract_o pathset
 
@@ -192,8 +193,8 @@ let do_meet_pre tenv pset =
 
 (** Find the preconditions in the current spec table, apply meet then join, and return the joined
     preconditions *)
-let collect_preconditions tenv summary : Prop.normal BiabductionSummary.Jprop.t list =
-  let proc_name = Summary.get_proc_name summary in
+let collect_preconditions ({InterproceduralAnalysis.tenv; _} as analysis_data) summary :
+    Prop.normal BiabductionSummary.Jprop.t list =
   let collect_do_abstract_one tenv prop =
     if !BiabductionConfig.footprint then
       BiabductionConfig.run_in_re_execution_mode (Abs.abstract_no_symop tenv) prop
@@ -202,22 +203,22 @@ let collect_preconditions tenv summary : Prop.normal BiabductionSummary.Jprop.t 
   let pres =
     List.map
       ~f:(fun spec -> BiabductionSummary.Jprop.to_prop spec.BiabductionSummary.pre)
-      (Tabulation.get_specs_from_payload summary)
+      (BiabductionSummary.get_specs summary)
   in
   let pset = Propset.from_proplist tenv pres in
   let pset' =
     let f p = Prop.prop_normal_vars_to_primed_vars tenv p in
     Propset.map tenv f pset
   in
-  L.d_printfln "#### Extracted footprint of %a:  ####" Procname.pp proc_name ;
+  L.d_printfln "#### Extracted footprint  ####" ;
   L.d_increase_indent () ;
   Propset.d Prop.prop_emp pset' ;
   L.d_decrease_indent () ;
   L.d_ln () ;
   L.d_ln () ;
-  let pset'' = collect_do_abstract_pre proc_name tenv pset' in
+  let pset'' = collect_do_abstract_pre analysis_data pset' in
   let plist_meet = do_meet_pre tenv pset'' in
-  L.d_printfln "#### Footprint of %a after Meet  ####" Procname.pp proc_name ;
+  L.d_printfln "#### Footprint after Meet  ####" ;
   L.d_increase_indent () ;
   Propgraph.d_proplist Prop.prop_emp plist_meet ;
   L.d_decrease_indent () ;
@@ -228,7 +229,7 @@ let collect_preconditions tenv summary : Prop.normal BiabductionSummary.Jprop.t 
   let jplist = do_join_pre tenv plist_meet in
   L.d_decrease_indent () ;
   L.d_ln () ;
-  L.d_printfln "#### Footprint of %a after Join  ####" Procname.pp proc_name ;
+  L.d_printfln "#### Footprint after Join  ####" ;
   L.d_increase_indent () ;
   BiabductionSummary.Jprop.d_list ~shallow:false jplist ;
   L.d_decrease_indent () ;
@@ -236,18 +237,16 @@ let collect_preconditions tenv summary : Prop.normal BiabductionSummary.Jprop.t 
   let jplist' =
     List.map ~f:(BiabductionSummary.Jprop.map (Prop.prop_rename_primed_footprint_vars tenv)) jplist
   in
-  L.d_printfln "#### Renamed footprint of %a:  ####" Procname.pp proc_name ;
+  L.d_printfln "#### Renamed footprint ####" ;
   L.d_increase_indent () ;
   BiabductionSummary.Jprop.d_list ~shallow:false jplist' ;
   L.d_decrease_indent () ;
   L.d_ln () ;
   let jplist'' =
-    let f p =
-      Prop.prop_primed_vars_to_normal_vars tenv (collect_do_abstract_one proc_name tenv p)
-    in
+    let f p = Prop.prop_primed_vars_to_normal_vars tenv (collect_do_abstract_one analysis_data p) in
     List.map ~f:(BiabductionSummary.Jprop.map f) jplist'
   in
-  L.d_printfln "#### Abstracted footprint of %a:  ####" Procname.pp proc_name ;
+  L.d_printfln "#### Abstracted footprint ####" ;
   L.d_increase_indent () ;
   BiabductionSummary.Jprop.d_list ~shallow:false jplist'' ;
   L.d_decrease_indent () ;
@@ -265,7 +264,7 @@ let propagate (wl : Worklist.t) pname ~is_exception (pset : Paths.PathSet.t)
     let f prop path edgeset_curr =
       let exn_opt = if is_exception then Tabulation.prop_get_exn_name pname prop else None in
       Paths.PathSet.add_renamed_prop prop
-        (Paths.Path.extend curr_node exn_opt (State.get_session ()) path)
+        (Paths.Path.extend curr_node exn_opt (AnalysisState.get_session ()) path)
         edgeset_curr
     in
     Paths.PathSet.fold f pset Paths.PathSet.empty
@@ -275,20 +274,20 @@ let propagate (wl : Worklist.t) pname ~is_exception (pset : Paths.PathSet.t)
 
 
 (** propagate a set of results, including exceptions and divergence *)
-let propagate_nodes_divergence tenv (proc_cfg : ProcCfg.Exceptional.t) (pset : Paths.PathSet.t)
-    curr_node (wl : Worklist.t) =
+let propagate_nodes_divergence ({InterproceduralAnalysis.tenv; _} as analysis_data)
+    (proc_cfg : ProcCfg.Exceptional.t) (pset : Paths.PathSet.t) curr_node (wl : Worklist.t) =
   let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
   let pset_exn, pset_ok = Paths.PathSet.partition (Tabulation.prop_is_exn pname) pset in
   if
     !BiabductionConfig.footprint
     && not (Paths.PathSet.is_empty (State.get_diverging_states_node ()))
   then (
-    Errdesc.warning_err (State.get_loc_exn ()) "Propagating Divergence@." ;
+    Errdesc.warning_err (AnalysisState.get_loc_exn ()) "Propagating Divergence@." ;
     let exit_node = ProcCfg.Exceptional.exit_node proc_cfg in
     let diverging_states = State.get_diverging_states_node () in
     let prop_incons =
       let mk_incons prop =
-        let p_abs = Abs.abstract pname tenv prop in
+        let p_abs = Abs.abstract analysis_data prop in
         let p_zero = Prop.set p_abs ~sub:Predicates.sub_empty ~sigma:[] in
         Prop.normalize tenv (Prop.set p_zero ~pi:[Predicates.Aneq (Exp.zero, Exp.zero)])
       in
@@ -310,12 +309,12 @@ let propagate_nodes_divergence tenv (proc_cfg : ProcCfg.Exceptional.t) (pset : P
 (* =============== START of forward_tabulate =============== *)
 
 (** Symbolic execution for a Join node *)
-let do_symexec_join proc_cfg tenv wl curr_node (edgeset_todo : Paths.PathSet.t) =
+let do_symexec_join analysis_data proc_cfg wl curr_node (edgeset_todo : Paths.PathSet.t) =
   let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
   let curr_node_id = ProcCfg.Exceptional.Node.id curr_node in
   let new_dset = edgeset_todo in
   let old_dset = Join_table.find wl.Worklist.join_table curr_node_id in
-  let old_dset', new_dset' = Dom.pathset_join pname tenv old_dset new_dset in
+  let old_dset', new_dset' = Dom.pathset_join analysis_data old_dset new_dset in
   Join_table.add wl.Worklist.join_table curr_node_id (Paths.PathSet.union old_dset' new_dset') ;
   Container.iter curr_node ~fold:(ProcCfg.Exceptional.fold_normal_succs proc_cfg) ~f:(fun node ->
       Paths.PathSet.iter
@@ -353,16 +352,7 @@ let reset_prop_metrics () =
 
 exception RE_EXE_ERROR
 
-let pp_name fmt = F.pp_print_string fmt "interproc"
-
-let do_before_node session node =
-  State.set_node node ;
-  State.set_session session ;
-  L.reset_delayed_prints () ;
-  Printer.node_start_session ~pp_name node (session :> int)
-
-
-let do_after_node node = Printer.node_finish_session node
+let pp_name fmt = F.pp_print_string fmt "biabduction"
 
 (** Return the list of normal ids occurring in the instructions *)
 let instrs_get_normal_vars instrs =
@@ -377,14 +367,14 @@ let instrs_get_normal_vars instrs =
 
 
 (** Perform symbolic execution for a node starting from an initial prop *)
-let do_symbolic_execution exe_env summary proc_cfg handle_exn tenv
+let do_symbolic_execution ({InterproceduralAnalysis.tenv; _} as analysis_data) proc_cfg handle_exn
     (node : ProcCfg.Exceptional.Node.t) (prop : Prop.normal Prop.t) (path : Paths.Path.t) =
   State.mark_execution_start node ;
   let instrs = ProcCfg.Exceptional.instrs node in
   (* fresh normal vars must be fresh w.r.t. instructions *)
   Ident.update_name_generator (instrs_get_normal_vars instrs) ;
   let pset =
-    SymExec.node handle_exn exe_env tenv summary proc_cfg node
+    SymExec.node handle_exn analysis_data proc_cfg node
       (Paths.PathSet.from_renamed_list [(prop, path)])
   in
   L.d_strln ".... After Symbolic Execution ...." ;
@@ -395,54 +385,52 @@ let do_symbolic_execution exe_env summary proc_cfg handle_exn tenv
   pset
 
 
-let mark_visited summary node =
-  if not !BiabductionConfig.footprint then
-    let node_id = (Procdesc.Node.get_id node :> int) in
-    let stats = summary.Summary.stats in
-    Summary.Stats.add_visited stats node_id
-
-
-let forward_tabulate summary exe_env tenv proc_cfg wl =
+let forward_tabulate ({InterproceduralAnalysis.proc_desc; err_log; tenv; _} as analysis_data)
+    proc_cfg summary wl =
   let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
   let handle_exn_node curr_node exn =
     Exceptions.print_exception_html "Failure of symbolic execution: " exn ;
     let pre_opt =
       (* precondition leading to error, if any *)
-      State.get_normalized_pre (Abs.abstract_no_symop pname)
+      State.get_normalized_pre (fun _tenv -> Abs.abstract_no_symop analysis_data)
     in
     ( match pre_opt with
     | Some pre ->
-        L.d_strln "Precondition:" ; Prop.d_prop pre ; L.d_ln ()
+        L.d_strln "Precondition:" ;
+        Prop.d_prop pre ;
+        L.d_ln ()
     | None ->
         () ) ;
     L.d_strln "SIL INSTR:" ;
-    Procdesc.Node.d_instrs ~highlight:(State.get_instr ()) curr_node ;
+    Procdesc.Node.d_instrs ~highlight:(AnalysisState.get_instr ()) curr_node ;
     L.d_ln () ;
-    Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn ;
+    BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log exn ;
     State.mark_instr_fail exn
   in
   let exe_iter f pathset =
     let ps_size = Paths.PathSet.size pathset in
     let cnt = ref 0 in
-    let exe prop path = State.set_path path None ; incr cnt ; f prop path !cnt ps_size in
+    let exe prop path =
+      State.set_path path None ;
+      incr cnt ;
+      f prop path !cnt ps_size
+    in
     Paths.PathSet.iter exe pathset
   in
-  let print_node_preamble curr_node session pathset_todo =
+  let print_node_preamble curr_node pathset_todo =
     let log_string proc_name =
       let phase_string =
         let open BiabductionSummary in
-        summary.Summary.payloads.biabduction |> opt_get_phase |> string_of_phase_short
+        opt_get_phase summary |> string_of_phase_short
       in
-      let status = Summary.get_status summary in
-      F.sprintf "[%s:%s] %s" phase_string (Summary.Status.to_string status)
-        (Procname.to_string proc_name)
+      F.sprintf "[%s:Pending] %s" phase_string (Procname.to_string proc_name)
     in
-    L.d_printfln "**** %s Node: %a, Procedure: %a, Session: %d, Todo: %d ****" (log_string pname)
-      Procdesc.Node.pp curr_node Procname.pp pname session (Paths.PathSet.size pathset_todo) ;
+    L.d_printfln "**** %s Node: %a, Procedure: %a, Todo: %d ****" (log_string pname)
+      Procdesc.Node.pp curr_node Procname.pp pname (Paths.PathSet.size pathset_todo) ;
     L.d_increase_indent () ;
     Propset.d Prop.prop_emp (Paths.PathSet.to_propset tenv pathset_todo) ;
     L.d_strln ".... Instructions: ...." ;
-    Procdesc.Node.d_instrs ~highlight:(State.get_instr ()) curr_node ;
+    Procdesc.Node.d_instrs ~highlight:(AnalysisState.get_instr ()) curr_node ;
     L.d_ln () ;
     L.d_ln ()
   in
@@ -451,10 +439,8 @@ let forward_tabulate summary exe_env tenv proc_cfg wl =
     L.d_increase_indent () ;
     try
       State.reset_diverging_states_node () ;
-      let pset =
-        do_symbolic_execution exe_env summary proc_cfg handle_exn tenv curr_node prop path
-      in
-      propagate_nodes_divergence tenv proc_cfg pset curr_node wl ;
+      let pset = do_symbolic_execution analysis_data proc_cfg handle_exn curr_node prop path in
+      propagate_nodes_divergence analysis_data proc_cfg pset curr_node wl ;
       L.d_decrease_indent () ;
       L.d_ln ()
     with exn ->
@@ -464,20 +450,16 @@ let forward_tabulate summary exe_env tenv proc_cfg wl =
       L.d_decrease_indent () ;
       L.d_ln ()
   in
-  let do_node curr_node pathset_todo session handle_exn =
+  let do_node curr_node pathset_todo handle_exn =
     check_prop_size pathset_todo ;
-    print_node_preamble curr_node session pathset_todo ;
+    print_node_preamble curr_node pathset_todo ;
     match Procdesc.Node.get_kind curr_node with
-    | Procdesc.Node.Join_node ->
-        do_symexec_join proc_cfg tenv wl curr_node pathset_todo
-    | Procdesc.Node.Stmt_node _
-    | Procdesc.Node.Prune_node _
-    | Procdesc.Node.Exit_node
-    | Procdesc.Node.Skip_node _
-    | Procdesc.Node.Start_node ->
+    | Join_node ->
+        do_symexec_join analysis_data proc_cfg wl curr_node pathset_todo
+    | Stmt_node _ | Prune_node _ | Exit_node | Skip_node _ | Start_node ->
         exe_iter (do_prop curr_node handle_exn) pathset_todo
   in
-  let do_node_and_handle curr_node session =
+  let do_node_and_handle curr_node =
     let pathset_todo = path_set_checkout_todo wl curr_node in
     try
       let handle_exn_called = ref false in
@@ -485,53 +467,34 @@ let forward_tabulate summary exe_env tenv proc_cfg wl =
         handle_exn_called := true ;
         handle_exn_node curr_node exn
       in
-      do_node curr_node pathset_todo session handle_exn ;
-      if !handle_exn_called then Printer.force_delayed_prints () ;
-      do_after_node curr_node
+      do_node curr_node pathset_todo handle_exn
     with exn ->
       IExn.reraise_if exn ~f:(fun () -> not (Exceptions.handle_exception exn)) ;
       handle_exn_node curr_node exn ;
-      Printer.force_delayed_prints () ;
-      do_after_node curr_node ;
       if not !BiabductionConfig.footprint then raise RE_EXE_ERROR
   in
   while not (Worklist.is_empty wl) do
     let curr_node = Worklist.remove wl in
-    mark_visited summary curr_node ;
-    (* mark nodes visited in fp and re phases *)
-    let session =
-      summary.Summary.sessions <- summary.Summary.sessions + 1 ;
-      summary.Summary.sessions
-    in
-    do_before_node session curr_node ;
-    do_node_and_handle curr_node session
+    AnalysisCallbacks.html_debug_new_node_session ~pp_name curr_node ~f:(fun () ->
+        do_node_and_handle curr_node )
   done ;
   L.d_strln ".... Work list empty. Stop ...." ;
   L.d_ln ()
 
 
 (** Remove locals and formals, and check if the address of a stack variable is left in the result *)
-let remove_locals_formals_and_check tenv proc_cfg p =
+let remove_locals_formals_and_check {InterproceduralAnalysis.tenv; _} proc_cfg p =
   let pdesc = ProcCfg.Exceptional.proc_desc proc_cfg in
-  let pname = Procdesc.get_proc_name pdesc in
-  let pvars, p' = PropUtil.remove_locals_formals tenv pdesc p in
-  let check_pvar pvar =
-    if not (Pvar.is_frontend_tmp pvar) then
-      let loc = ProcCfg.Exceptional.Node.loc (ProcCfg.Exceptional.exit_node proc_cfg) in
-      let dexp_opt, _ = Errdesc.vpath_find tenv p (Exp.Lvar pvar) in
-      let desc = Errdesc.explain_stack_variable_address_escape loc pvar dexp_opt in
-      let exn = Exceptions.Stack_variable_address_escape (desc, __POS__) in
-      Reporting.log_issue_deprecated_using_state Exceptions.Warning pname exn
-  in
-  List.iter ~f:check_pvar pvars ; p'
+  let _pvars, p' = PropUtil.remove_locals_formals tenv pdesc p in
+  p'
 
 
 (** Collect the analysis results for the exit node. *)
-let collect_analysis_result tenv wl proc_cfg : Paths.PathSet.t =
+let collect_analysis_result analysis_data wl proc_cfg : Paths.PathSet.t =
   let exit_node = ProcCfg.Exceptional.exit_node proc_cfg in
   let exit_node_id = ProcCfg.Exceptional.Node.id exit_node in
   let pathset = htable_retrieve wl.Worklist.path_set_visited exit_node_id in
-  Paths.PathSet.map (remove_locals_formals_and_check tenv proc_cfg) pathset
+  Paths.PathSet.map (remove_locals_formals_and_check analysis_data proc_cfg) pathset
 
 
 let vset_add_path vset path =
@@ -563,7 +526,8 @@ let compute_visited vset =
 
 (* Extract specs from a pathset, after the footprint phase. The postconditions will be thrown away
   by the re-execution phase, but they are first used to detect custom errors. *)
-let extract_specs tenv pdesc pathset : Prop.normal BiabductionSummary.spec list =
+let extract_specs ({InterproceduralAnalysis.tenv; _} as analysis_data) pdesc pathset :
+    Prop.normal BiabductionSummary.spec list =
   if not !BiabductionConfig.footprint then
     L.die InternalError
       "Interproc.extract_specs should not be used for footprint but not for re-execution, because \
@@ -581,7 +545,7 @@ let extract_specs tenv pdesc pathset : Prop.normal BiabductionSummary.spec list 
   let pre_post_list =
     let f (prop, path) =
       let _remaining, prop = PropUtil.remove_locals_formals tenv pdesc prop in
-      let prop = Abs.abstract (Procdesc.get_proc_name pdesc) tenv prop in
+      let prop = Abs.abstract analysis_data prop in
       let pre, post = Prop.extract_spec prop in
       let pre = Prop.normalize tenv (Prop.prop_sub sub pre) in
       let post = PropUtil.remove_seed_vars tenv (Prop.prop_sub sub post) in
@@ -609,9 +573,10 @@ let extract_specs tenv pdesc pathset : Prop.normal BiabductionSummary.spec list 
   List.map ~f:mk_spec pre_post_list
 
 
-let collect_postconditions wl tenv proc_cfg : Paths.PathSet.t * BiabductionSummary.Visitedset.t =
+let collect_postconditions analysis_data wl tenv proc_cfg :
+    Paths.PathSet.t * BiabductionSummary.Visitedset.t =
   let pname = Procdesc.get_proc_name (ProcCfg.Exceptional.proc_desc proc_cfg) in
-  let pathset = collect_analysis_result tenv wl proc_cfg in
+  let pathset = collect_analysis_result analysis_data wl proc_cfg in
   (* Assuming C++ developers use RAII, remove resources from the constructor posts *)
   let pathset =
     match pname with
@@ -632,7 +597,7 @@ let collect_postconditions wl tenv proc_cfg : Paths.PathSet.t * BiabductionSumma
   L.d_ln () ;
   let res =
     try
-      let pathset = collect_do_abstract_post pname tenv pathset in
+      let pathset = collect_do_abstract_post analysis_data pathset in
       let pathset_diverging = State.get_diverging_states_proc () in
       let visited =
         let vset = vset_add_pathset Procdesc.NodeSet.empty pathset in
@@ -726,62 +691,62 @@ let initial_prop_from_pre tenv curr_f pre =
 
 
 (** Re-execute one precondition and return some spec if there was no re-execution error. *)
-let execute_filter_prop summary exe_env tenv proc_cfg
+let execute_filter_prop ({InterproceduralAnalysis.tenv; _} as analysis_data) proc_cfg summary
     (precondition : Prop.normal BiabductionSummary.Jprop.t) :
     Prop.normal BiabductionSummary.spec option =
   let init_node = ProcCfg.Exceptional.start_node proc_cfg in
   let wl = path_set_create_worklist proc_cfg in
   let pdesc = ProcCfg.Exceptional.proc_desc proc_cfg in
   let pname = Procdesc.get_proc_name pdesc in
-  do_before_node 0 init_node ;
-  L.d_printfln "#### Start: RE-execution for %a ####" Procname.pp pname ;
-  L.d_indent 1 ;
-  L.d_strln "Precond:" ;
-  BiabductionSummary.Jprop.d_shallow precondition ;
-  L.d_ln () ;
-  L.d_ln () ;
-  let init_prop =
-    initial_prop_from_pre tenv pdesc (BiabductionSummary.Jprop.to_prop precondition)
-  in
   let init_edgeset =
-    Paths.PathSet.add_renamed_prop init_prop (Paths.Path.start init_node) Paths.PathSet.empty
+    AnalysisCallbacks.html_debug_new_node_session ~pp_name init_node ~f:(fun () ->
+        L.d_printfln "#### Start: RE-execution for %a ####" Procname.pp pname ;
+        L.d_indent 1 ;
+        L.d_strln "Precond:" ;
+        BiabductionSummary.Jprop.d_shallow precondition ;
+        L.d_ln () ;
+        L.d_ln () ;
+        let init_prop =
+          initial_prop_from_pre tenv pdesc (BiabductionSummary.Jprop.to_prop precondition)
+        in
+        Paths.PathSet.add_renamed_prop init_prop (Paths.Path.start init_node) Paths.PathSet.empty )
   in
-  do_after_node init_node ;
   try
     Worklist.add wl init_node ;
     ignore (path_set_put_todo wl init_node init_edgeset) ;
-    forward_tabulate summary exe_env tenv proc_cfg wl ;
-    do_before_node 0 init_node ;
-    L.d_printfln ~color:Green "#### Finished: RE-execution for %a ####" Procname.pp pname ;
-    L.d_increase_indent () ;
-    L.d_strln "Precond:" ;
-    Prop.d_prop (BiabductionSummary.Jprop.to_prop precondition) ;
-    L.d_ln () ;
-    let posts, visited =
-      let pset, visited = collect_postconditions wl tenv proc_cfg in
-      let plist =
-        List.map
-          ~f:(fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
-          (Paths.PathSet.elements pset)
-      in
-      (plist, visited)
-    in
-    let pre =
-      BiabductionSummary.Jprop.shallow_map ~f:(PropUtil.remove_locals_ret tenv pdesc) precondition
-    in
-    let spec = BiabductionSummary.{pre; posts; visited} in
-    L.d_decrease_indent () ; do_after_node init_node ; Some spec
+    forward_tabulate analysis_data proc_cfg summary wl ;
+    AnalysisCallbacks.html_debug_new_node_session ~pp_name init_node ~f:(fun () ->
+        L.d_printfln ~color:Green "#### Finished: RE-execution for %a ####" Procname.pp pname ;
+        L.d_increase_indent () ;
+        L.d_strln "Precond:" ;
+        Prop.d_prop (BiabductionSummary.Jprop.to_prop precondition) ;
+        L.d_ln () ;
+        let posts, visited =
+          let pset, visited = collect_postconditions analysis_data wl tenv proc_cfg in
+          let plist =
+            List.map
+              ~f:(fun (p, path) -> (PropUtil.remove_seed_vars tenv p, path))
+              (Paths.PathSet.elements pset)
+          in
+          (plist, visited)
+        in
+        let pre =
+          BiabductionSummary.Jprop.shallow_map
+            ~f:(PropUtil.remove_locals_ret tenv pdesc)
+            precondition
+        in
+        let spec = BiabductionSummary.{pre; posts; visited} in
+        L.d_decrease_indent () ;
+        Some spec )
   with RE_EXE_ERROR ->
-    do_before_node 0 init_node ;
-    Printer.force_delayed_prints () ;
-    L.d_printfln ~color:Red "#### [FUNCTION %a] ...ERROR" Procname.pp pname ;
-    L.d_increase_indent () ;
-    L.d_strln "when starting from pre:" ;
-    Prop.d_prop (BiabductionSummary.Jprop.to_prop precondition) ;
-    L.d_strln "This precondition is filtered out." ;
-    L.d_decrease_indent () ;
-    do_after_node init_node ;
-    None
+    AnalysisCallbacks.html_debug_new_node_session ~pp_name init_node ~f:(fun () ->
+        L.d_printfln ~color:Red "#### [FUNCTION %a] ...ERROR" Procname.pp pname ;
+        L.d_increase_indent () ;
+        L.d_strln "when starting from pre:" ;
+        Prop.d_prop (BiabductionSummary.Jprop.to_prop precondition) ;
+        L.d_strln "This precondition is filtered out." ;
+        L.d_decrease_indent () ;
+        None )
 
 
 type exe_phase =
@@ -791,9 +756,9 @@ type exe_phase =
     [do, get_results] where [go ()] performs the analysis phase and [get_results ()] returns the
     results computed. This function is architected so that [get_results ()] can be called even after
     [go ()] was interrupted by and exception. *)
-let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCfg.Exceptional.t) :
-    exe_phase =
-  let pname = Summary.get_proc_name summary in
+let perform_analysis_phase ({InterproceduralAnalysis.proc_desc; err_log; tenv} as analysis_data)
+    (proc_cfg : ProcCfg.Exceptional.t) summary_opt : exe_phase =
+  let pname = Procdesc.get_proc_name proc_desc in
   let start_node = ProcCfg.Exceptional.start_node proc_cfg in
   let compute_footprint () : exe_phase =
     let go (wl : Worklist.t) () =
@@ -801,12 +766,13 @@ let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCf
       let init_prop = initial_prop_from_emp tenv pdesc in
       (* use existing pre's (in recursion some might exist) as starting points *)
       let init_props_from_pres =
-        let specs = Tabulation.get_specs_from_payload summary in
         (* rename spec vars to footprint vars, and copy current to footprint *)
         let mk_init precondition =
           initial_prop_from_pre tenv pdesc (BiabductionSummary.Jprop.to_prop precondition)
         in
-        List.map ~f:(fun spec -> mk_init spec.BiabductionSummary.pre) specs
+        List.map
+          ~f:(fun spec -> mk_init spec.BiabductionSummary.pre)
+          (Option.value_map summary_opt ~default:[] ~f:BiabductionSummary.get_specs)
       in
       let init_props = Propset.from_proplist tenv (init_prop :: init_props_from_pres) in
       let init_edgeset =
@@ -823,21 +789,20 @@ let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCf
       L.d_decrease_indent () ;
       Worklist.add wl start_node ;
       ignore (path_set_put_todo wl start_node init_edgeset) ;
-      forward_tabulate summary exe_env tenv proc_cfg wl
+      forward_tabulate analysis_data proc_cfg summary_opt wl
     in
     let get_results (wl : Worklist.t) () =
       State.process_execution_failures
-        (Reporting.log_issue_deprecated_using_state Exceptions.Warning)
-        pname ;
-      let results = collect_analysis_result tenv wl proc_cfg in
+        (BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log) ;
+      let results = collect_analysis_result analysis_data wl proc_cfg in
       let specs =
-        try extract_specs tenv (ProcCfg.Exceptional.proc_desc proc_cfg) results
+        try extract_specs analysis_data (ProcCfg.Exceptional.proc_desc proc_cfg) results
         with Exceptions.Leak _ ->
           let exn =
             Exceptions.Internal_error
               (Localise.verbatim_desc "Leak_while_collecting_specs_after_footprint")
           in
-          Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn ;
+          BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log exn ;
           (* returning no specs *) []
       in
       (specs, BiabductionSummary.FOOTPRINT)
@@ -847,14 +812,13 @@ let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCf
   in
   let re_execution () : exe_phase =
     let candidate_preconditions =
-      List.map
-        ~f:(fun spec -> spec.BiabductionSummary.pre)
-        (Tabulation.get_specs_from_payload summary)
+      Option.value_map summary_opt ~default:[] ~f:BiabductionSummary.get_specs
+      |> List.map ~f:(fun spec -> spec.BiabductionSummary.pre)
     in
     let valid_specs_rev = ref [] in
     let go () =
       let filter p =
-        let speco = execute_filter_prop summary exe_env tenv proc_cfg p in
+        let speco = execute_filter_prop analysis_data proc_cfg summary_opt p in
         (match speco with None -> () | Some spec -> valid_specs_rev := spec :: !valid_specs_rev) ;
         speco
       in
@@ -872,7 +836,7 @@ let perform_analysis_phase exe_env tenv (summary : Summary.t) (proc_cfg : ProcCf
     in
     (go, get_results)
   in
-  match BiabductionSummary.opt_get_phase summary.payloads.biabduction with
+  match BiabductionSummary.opt_get_phase summary_opt with
   | FOOTPRINT ->
       compute_footprint ()
   | RE_EXECUTION ->
@@ -908,7 +872,7 @@ let custom_error_preconditions summary =
       ~f:(collect_errors spec.BiabductionSummary.pre)
       ~init:errors spec.BiabductionSummary.posts
   in
-  List.fold ~f:collect_spec ~init:([], true) (Tabulation.get_specs_from_payload summary)
+  List.fold ~f:collect_spec ~init:([], true) (BiabductionSummary.get_specs summary)
 
 
 (* Remove the constrain of the form this != null which is true for all Java virtual calls *)
@@ -947,15 +911,14 @@ let is_unavoidable tenv pre =
       false
 
 
-let report_custom_errors tenv summary =
-  let pname = Summary.get_proc_name summary in
+let report_custom_errors {InterproceduralAnalysis.proc_desc; err_log; tenv} summary =
   let error_preconditions, all_post_error = custom_error_preconditions summary in
   let report (pre, custom_error) =
     if all_post_error || is_unavoidable tenv pre then
-      let loc = Summary.get_loc summary in
+      let loc = Procdesc.get_loc proc_desc in
       let err_desc = Localise.desc_custom_error loc in
-      let exn = Exceptions.Custom_error (custom_error, err_desc) in
-      Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn
+      let exn = Exceptions.Custom_error (custom_error, Error, err_desc) in
+      BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log exn
   in
   List.iter ~f:report error_preconditions
 
@@ -967,10 +930,10 @@ module SpecMap = Caml.Map.Make (struct
 end)
 
 (** Update the specs of the current proc after the execution of one phase *)
-let update_specs tenv prev_summary phase (new_specs : BiabductionSummary.NormSpec.t list) :
-    BiabductionSummary.NormSpec.t list * bool =
+let update_specs analysis_data prev_summary_opt phase
+    (new_specs : BiabductionSummary.NormSpec.t list) : BiabductionSummary.NormSpec.t list * bool =
   let new_specs = BiabductionSummary.normalized_specs_to_specs new_specs in
-  let old_specs = Tabulation.get_specs_from_payload prev_summary in
+  let old_specs = Option.value_map ~default:[] ~f:BiabductionSummary.get_specs prev_summary_opt in
   let changed = ref false in
   let current_specs =
     ref
@@ -1021,10 +984,9 @@ let update_specs tenv prev_summary phase (new_specs : BiabductionSummary.NormSpe
   in
   let res = ref [] in
   let convert pre (post_set, visited) =
-    let pname = Summary.get_proc_name prev_summary in
     res :=
-      Abs.abstract_spec pname tenv
-        BiabductionSummary.{pre; posts= Paths.PathSet.elements post_set; visited}
+      Abs.abstract_spec analysis_data
+        {BiabductionSummary.pre; posts= Paths.PathSet.elements post_set; visited}
       :: !res
   in
   List.iter ~f:re_exe_filter old_specs ;
@@ -1036,13 +998,11 @@ let update_specs tenv prev_summary phase (new_specs : BiabductionSummary.NormSpe
 
 
 (** update a summary after analysing a procedure *)
-let update_summary tenv prev_summary specs phase res =
+let update_summary ({InterproceduralAnalysis.tenv; update_stats} as analysis_data) prev_summary
+    specs phase res =
   let normal_specs = List.map ~f:(BiabductionSummary.spec_normalize tenv) specs in
-  let new_specs, _ = update_specs tenv prev_summary phase normal_specs in
-  let stats =
-    Summary.Stats.update prev_summary.Summary.stats ~add_symops:(SymOp.get_total ())
-      ?failure_kind:res
-  in
+  let new_specs, _ = update_specs analysis_data prev_summary phase normal_specs in
+  update_stats ~add_symops:(SymOp.get_total ()) ?failure_kind:res () ;
   let preposts =
     match phase with
     | BiabductionSummary.FOOTPRINT ->
@@ -1050,130 +1010,109 @@ let update_summary tenv prev_summary specs phase res =
     | BiabductionSummary.RE_EXECUTION ->
         List.map ~f:(BiabductionSummary.NormSpec.erase_join_info_pre tenv) new_specs
   in
-  let payloads =
-    { prev_summary.Summary.payloads with
-      Payloads.biabduction= Some BiabductionSummary.{preposts; phase} }
-  in
-  {prev_summary with Summary.stats; payloads}
+  {BiabductionSummary.preposts; phase}
 
 
 (** Analyze the procedure and return the resulting summary. *)
-let analyze_proc summary exe_env tenv proc_cfg : Summary.t =
+let analyze_proc analysis_data summary_opt proc_cfg : BiabductionSummary.t =
   let proc_desc = ProcCfg.Exceptional.proc_desc proc_cfg in
   reset_global_values proc_desc ;
-  let go, get_results = perform_analysis_phase exe_env tenv summary proc_cfg in
+  let go, get_results = perform_analysis_phase analysis_data proc_cfg summary_opt in
   let res = Timeout.exe_timeout go () in
   let specs, phase = get_results () in
-  let updated_summary = update_summary tenv summary specs phase res in
+  let updated_summary = update_summary analysis_data summary_opt specs phase res in
   if Language.curr_language_is Clang && Config.report_custom_error then
-    report_custom_errors tenv updated_summary ;
+    report_custom_errors analysis_data updated_summary ;
   updated_summary
 
 
 (** Perform the transition from [FOOTPRINT] to [RE_EXECUTION] in spec table *)
-let transition_footprint_re_exe summary tenv joined_pres : Summary.t =
-  let summary' =
-    if Config.only_footprint then
-      match summary.Summary.payloads.biabduction with
-      | Some ({phase= FOOTPRINT} as biabduction) ->
-          { summary with
-            Summary.payloads=
-              { summary.Summary.payloads with
-                Payloads.biabduction= Some {biabduction with BiabductionSummary.phase= RE_EXECUTION}
-              } }
-      | _ ->
-          summary
-    else
-      let preposts =
-        List.map
-          ~f:(fun jp ->
-            BiabductionSummary.spec_normalize tenv
-              {BiabductionSummary.pre= jp; posts= []; visited= BiabductionSummary.Visitedset.empty}
-            )
-          joined_pres
-      in
-      let payloads =
-        { summary.Summary.payloads with
-          biabduction= Some BiabductionSummary.{preposts; phase= RE_EXECUTION} }
-      in
-      {summary with Summary.payloads}
-  in
-  summary'
+let transition_footprint_re_exe summary tenv joined_pres : BiabductionSummary.t =
+  if Config.only_footprint then
+    if BiabductionSummary.equal_phase summary.BiabductionSummary.phase FOOTPRINT then
+      {summary with BiabductionSummary.phase= RE_EXECUTION}
+    else summary
+  else
+    let preposts =
+      List.map
+        ~f:(fun jp ->
+          BiabductionSummary.spec_normalize tenv
+            {BiabductionSummary.pre= jp; posts= []; visited= BiabductionSummary.Visitedset.empty} )
+        joined_pres
+    in
+    {BiabductionSummary.preposts; phase= RE_EXECUTION}
 
 
 (** Perform phase transition from [FOOTPRINT] to [RE_EXECUTION] for the procedures enabled after the
     analysis of [proc_name] *)
-let perform_transition proc_cfg tenv proc_name summary =
+let perform_transition ({InterproceduralAnalysis.tenv; _} as analysis_data) proc_cfg proc_name
+    summary =
   let transition summary =
     (* disable exceptions for leaks and protect against any other errors *)
     let joined_pres =
       let allow_leak = !BiabductionConfig.allow_leak in
       (* apply the start node to f, and do nothing in case of exception *)
-      let apply_start_node f =
-        try f (ProcCfg.Exceptional.start_node proc_cfg)
-        with exn when SymOp.exn_not_failure exn -> ()
+      let with_start_node_session ~f =
+        match ProcCfg.Exceptional.start_node proc_cfg with
+        | start_node ->
+            AnalysisCallbacks.html_debug_new_node_session ~pp_name start_node ~f
+        | exception exn when SymOp.exn_not_failure exn ->
+            f ()
       in
-      apply_start_node (do_before_node 0) ;
-      try
-        BiabductionConfig.allow_leak := true ;
-        let res = collect_preconditions tenv summary in
-        BiabductionConfig.allow_leak := allow_leak ;
-        apply_start_node do_after_node ;
-        res
-      with exn when SymOp.exn_not_failure exn ->
-        apply_start_node do_after_node ;
-        BiabductionConfig.allow_leak := allow_leak ;
-        L.(debug Analysis Medium) "Error in collect_preconditions for %a@." Procname.pp proc_name ;
-        let error = Exceptions.recognize_exception exn in
-        let err_str = "exception raised " ^ error.name.IssueType.unique_id in
-        L.(debug Analysis Medium) "Error: %s %a@." err_str L.pp_ocaml_pos_opt error.ocaml_pos ;
-        []
+      with_start_node_session ~f:(fun () ->
+          try
+            BiabductionConfig.allow_leak := true ;
+            let res = collect_preconditions analysis_data summary in
+            BiabductionConfig.allow_leak := allow_leak ;
+            res
+          with exn when SymOp.exn_not_failure exn ->
+            BiabductionConfig.allow_leak := allow_leak ;
+            L.debug Analysis Medium "Error in collect_preconditions for %a@." Procname.pp proc_name ;
+            let error = Exceptions.recognize_exception exn in
+            let err_str = "exception raised " ^ error.issue_type.unique_id in
+            L.(debug Analysis Medium) "Error: %s %a@." err_str L.pp_ocaml_pos_opt error.ocaml_pos ;
+            [] )
     in
     transition_footprint_re_exe summary tenv joined_pres
   in
-  if
-    let open BiabductionSummary in
-    summary.Summary.payloads.biabduction |> opt_get_phase |> equal_phase FOOTPRINT
-  then transition summary
+  if BiabductionSummary.equal_phase summary.BiabductionSummary.phase FOOTPRINT then
+    transition summary
   else summary
 
 
-let analyze_procedure_aux summary exe_env tenv : Summary.t =
-  let proc_desc = Summary.get_proc_desc summary in
+let analyze_procedure_aux ({InterproceduralAnalysis.proc_desc; _} as analysis_data) :
+    BiabductionSummary.t =
   let proc_name = Procdesc.get_proc_name proc_desc in
   let proc_cfg = ProcCfg.Exceptional.from_pdesc proc_desc in
   let summaryfp =
-    BiabductionConfig.run_in_footprint_mode (analyze_proc summary exe_env tenv) proc_cfg
-    |> perform_transition proc_cfg tenv proc_name
+    BiabductionConfig.run_in_footprint_mode (analyze_proc analysis_data None) proc_cfg
+    |> perform_transition analysis_data proc_cfg proc_name
   in
   let summaryre =
-    BiabductionConfig.run_in_re_execution_mode (analyze_proc summaryfp exe_env tenv) proc_cfg
+    BiabductionConfig.run_in_re_execution_mode
+      (analyze_proc analysis_data (Some summaryfp))
+      proc_cfg
   in
   let summary_compact =
-    match summaryre.Summary.payloads.biabduction with
-    | Some BiabductionSummary.({preposts} as biabduction) when Config.save_compact_summaries ->
-        let sharing_env = Predicates.create_sharing_env () in
-        let compact_preposts =
-          List.map ~f:(BiabductionSummary.NormSpec.compact sharing_env) preposts
-        in
-        { summaryre with
-          payloads=
-            { summaryre.payloads with
-              biabduction= Some {biabduction with BiabductionSummary.preposts= compact_preposts} }
-        }
-    | _ ->
-        summaryre
+    if Config.save_compact_summaries then
+      let sharing_env = Predicates.create_sharing_env () in
+      let compact_preposts =
+        List.map
+          ~f:(BiabductionSummary.NormSpec.compact sharing_env)
+          summaryre.BiabductionSummary.preposts
+      in
+      {summaryre with BiabductionSummary.preposts= compact_preposts}
+    else summaryre
   in
   summary_compact
 
 
-let analyze_procedure {Callbacks.summary; exe_env} : Summary.t =
-  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
+let analyze_procedure ({InterproceduralAnalysis.proc_desc; err_log} as analysis_data) :
+    BiabductionSummary.t option =
   (* make sure models have been registered *)
   BuiltinDefn.init () ;
-  if Topl.is_active () then Topl.instrument tenv (Summary.get_proc_desc summary) ;
-  try analyze_procedure_aux summary exe_env tenv
+  try Some (analyze_procedure_aux analysis_data)
   with exn ->
     IExn.reraise_if exn ~f:(fun () -> not (Exceptions.handle_exception exn)) ;
-    Reporting.log_error_using_state summary exn ;
-    summary
+    BiabductionReporting.log_issue_using_state proc_desc err_log exn ;
+    None

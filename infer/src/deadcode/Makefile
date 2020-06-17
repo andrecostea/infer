@@ -50,8 +50,8 @@ endif
 # Note that we run find under _build directory. Since we copy some
 # sources from subfolders to src/ folder to avoid duplicates we use
 # $(DEPTH_ONE) and iteration over main and library folders.
-LIBRARY_FOLDERS = . ./IR ./atd ./base ./c_stubs ./istd ./scripts
-INCLUDE_FOLDERS = -I IR -I atd -I base -I c_stubs -I istd -I scripts
+LIBRARY_FOLDERS = . ./IR ./absint ./al ./atd ./backend ./base ./biabduction ./bufferoverrun ./c_stubs ./checkers ./clang ./clang/unit ./concurrency ./cost ./integration ./istd ./java ./labs ./nullsafe ./nullsafe/unit ./pulse ./quandary ./scripts ./test_determinator ./topl ./unit
+INCLUDE_FOLDERS = -I IR -I absint -I al -I atd -I backend -I base -I biabduction -I bufferoverrun -I c_stubs -I checkers -I clang -I clang/unit -I concurrency -I cost -I integration -I istd -I java -I labs -I nullsafe -I nullsafe/unit -I pulse -I quandary -I scripts -I test_determinator -I topl -I unit
 
 ml_src_files:=$(shell \
 	cd $(INFER_BUILD_DIR); \
@@ -163,14 +163,18 @@ $(ml_src_files_without_mli:.ml=.cmx):
 flatten_infer: infer.cmx inferunit.cmx InferCreateTraceViewLinks.cmx scripts/checkCopyright.cmx
 	$(QUIET)echo "see results in $(ALL_INFER_IN_ONE_FILE_ML)"
 
+# copy dune.in to dune only when needed to avoid dune trying to build
+# all_infer_in_one_file as part of the rest of the build
+dune: dune.in
+	$(QUIET)$(INSTALL_DATA) $< $@
+
 .PHONY: detect_dead_code
-detect_dead_code:
-	$(MAKE) clean
+detect_dead_code: dune
 #	create a dummy implementation file to keep dune happy, as we are about to generate the
 #	dune file for this directory
 	touch $(ALL_INFER_IN_ONE_FILE_ML) $(ALL_INFER_IN_ONE_FILE_ML:.ml=.mli)
-#	needed to get dune generated, and the generated code for the lexers and parsers in ../_build
-	$(MAKE) GENERATED_DUNES=deadcode/dune -C .. test
+#	needed to get the generated code for the lexers and parsers in ../_build
+	$(MAKE) -C .. test
 	$(MAKE) depend
 #	Need to be sequential to avoid getting a garbled file. Need to re-include .depend as it may
 #	have changed. For both of these reasons, run another `make`.
@@ -182,24 +186,21 @@ detect_dead_code:
 	sort -u "$$tmp_file_copied" > $(ALL_ML_FILES_COPIED); \
 	rm "$$tmp_file_copied"
 	$(MAKE) -j 1 detect_dead_src_file
-#	build and get dead code warnings; clean in case of errors so as not to leave rubbish around
-	if ! dune build --profile test all_infer_in_one_file.bc; then \
-	  $(MAKE) clean; \
-	  exit 1; \
-	fi
-#	be paranoid about cleaning because we do not want to include infer_in_one_file into infer by
-#	accident and I don't know enough dune to be positive that it won't happen
-	$(MAKE) clean
+#	build and get dead code warnings
+	dune build --profile test all_infer_in_one_file.bc
+	$(REMOVE) dune
 
 .PHONY: detect_dead_src_file
 detect_dead_src_file:
 	function is_in_blacklist { \
-	  if [ "$$1" = "infertop.ml" ] \
-	  || [ "$$1" = "deadcode/all_infer_in_one_file.ml" ] \
-	  || [ "$$1" = "deadcode/all_infer_in_one_file.mli" ] \
-	  || [[ "$$1" =~ ^"labs/" ]] \
-	  || [[ "$$1" =~ ^"llvm/" ]] \
-	  || [[ "$$1" =~ ^"opensource/" ]]; then \
+	  if [ $$1 = infertop.ml ] \
+	  || [ $$1 = infertop.mli ] \
+	  || [ $$1 = deadcode/all_infer_in_one_file.ml ] \
+	  || [ $$1 = deadcode/all_infer_in_one_file.mli ] \
+	  || [[ $$1 =~ .*FrontendStubs.mli?$$ ]] \
+	  || [[ $$1 =~ ^labs/ ]] \
+	  || [[ $$1 =~ ^llvm/ ]] \
+	  || [[ $$1 =~ ^opensource/ ]]; then \
 	    exit 0; \
           else \
 	    exit 1; \
@@ -232,20 +233,12 @@ detect_dead_src_file:
 	  (is_in_blacklist "$$i") || (echo "$$i" >> "$$tmp_file"); \
 	done; \
 	sort -u "$$tmp_file" > $(ALL_MLI_FILES_COPIED); \
-	rm "$$tmp_file"; \
-
-	if ! diff $(ALL_ML_FILES) $(ALL_ML_FILES_COPIED) 1>&2; then \
-	  $(MAKE) clean; \
-	  exit 1; \
-	fi
-
-	if ! diff $(ALL_MLI_FILES) $(ALL_MLI_FILES_COPIED) 1>&2; then \
-	  $(MAKE) clean; \
-	  exit 1; \
-	fi
+	rm "$$tmp_file"
+	diff $(ALL_ML_FILES) $(ALL_ML_FILES_COPIED) 1>&2
+	diff $(ALL_MLI_FILES) $(ALL_MLI_FILES_COPIED) 1>&2
 
 .PHONY: clean
 clean:
-	$(REMOVE) .depend *.ml *.mli dune $(ALL_ML_FILES) $(ALL_MLI_FILES) $(ALL_ML_FILES_COPIED) \
-	  $(ALL_MLI_FILES_COPIED)
+	$(REMOVE) .depend *.ml *.mli $(ALL_ML_FILES) $(ALL_MLI_FILES) $(ALL_ML_FILES_COPIED) \
+	  $(ALL_MLI_FILES_COPIED) dune
 

@@ -6,7 +6,6 @@
  *)
 open! IStd
 module F = Format
-module CItv = PulseCItv
 module Invalidation = PulseInvalidation
 module Trace = PulseTrace
 module ValueHistory = PulseValueHistory
@@ -29,9 +28,8 @@ module Attribute = struct
     | AddressOfCppTemporary of Var.t * ValueHistory.t
     | AddressOfStackVariable of Var.t * Location.t * ValueHistory.t
     | Allocated of Procname.t * Trace.t
-    | CItv of CItv.t * Trace.t
-    | BoItv of Itv.ItvPure.t
     | Closure of Procname.t
+    | DynamicType of Typ.Name.t
     | Invalid of Invalidation.t * Trace.t
     | MustBeValid of Trace.t
     | StdVectorReserve
@@ -39,6 +37,8 @@ module Attribute = struct
   [@@deriving compare, variants]
 
   let equal = [%compare.equal: t]
+
+  type rank = int
 
   let to_rank = Variants.to_rank
 
@@ -63,9 +63,9 @@ module Attribute = struct
 
   let std_vector_reserve_rank = Variants.to_rank StdVectorReserve
 
-  let const_rank = Variants.to_rank (CItv (CItv.equal_to IntLit.zero, dummy_trace))
+  let allocated_rank = Variants.to_rank (Allocated (Procname.Linters_dummy_method, dummy_trace))
 
-  let bo_itv_rank = Variants.to_rank (BoItv Itv.ItvPure.zero)
+  let dynamic_type_rank = Variants.to_rank (DynamicType (Typ.Name.Objc.from_string ""))
 
   let pp f attribute =
     let pp_string_if_debug string fmt =
@@ -81,12 +81,10 @@ module Attribute = struct
           (Trace.pp
              ~pp_immediate:(pp_string_if_debug ("allocation with " ^ Procname.to_string procname)))
           trace
-    | BoItv bo_itv ->
-        F.fprintf f "BoItv (%a)" Itv.ItvPure.pp bo_itv
     | Closure pname ->
         Procname.pp f pname
-    | CItv (phi, trace) ->
-        F.fprintf f "Arith %a" (Trace.pp ~pp_immediate:(fun fmt -> CItv.pp fmt phi)) trace
+    | DynamicType typ ->
+        F.fprintf f "DynamicType %a" Typ.Name.pp typ
     | Invalid (invalidation, trace) ->
         F.fprintf f "Invalid %a"
           (Trace.pp ~pp_immediate:(fun fmt -> Invalidation.pp fmt invalidation))
@@ -100,7 +98,7 @@ module Attribute = struct
 end
 
 module Attributes = struct
-  module Set = PrettyPrintable.MakePPUniqRankSet (Attribute)
+  module Set = PrettyPrintable.MakePPUniqRankSet (Int) (Attribute)
 
   let get_invalid attrs =
     Set.find_rank attrs Attribute.invalid_rank
@@ -146,18 +144,18 @@ module Attributes = struct
     || Option.is_some (Set.find_rank attrs Attribute.invalid_rank)
 
 
-  let get_citv attrs =
-    Set.find_rank attrs Attribute.const_rank
+  let get_allocation attrs =
+    Set.find_rank attrs Attribute.allocated_rank
     |> Option.map ~f:(fun attr ->
-           let[@warning "-8"] (Attribute.CItv (a, trace)) = attr in
-           (a, trace) )
+           let[@warning "-8"] (Attribute.Allocated (procname, trace)) = attr in
+           (procname, trace) )
 
 
-  let get_bo_itv attrs =
-    Set.find_rank attrs Attribute.bo_itv_rank
+  let get_dynamic_type attrs =
+    Set.find_rank attrs Attribute.dynamic_type_rank
     |> Option.map ~f:(fun attr ->
-           let[@warning "-8"] (Attribute.BoItv itv) = attr in
-           itv )
+           let[@warning "-8"] (Attribute.DynamicType typ) = attr in
+           typ )
 
 
   include Set
@@ -166,13 +164,31 @@ end
 include Attribute
 
 let is_suitable_for_pre = function
-  | CItv _ | BoItv _ | MustBeValid _ ->
+  | MustBeValid _ ->
       true
   | AddressOfCppTemporary _
   | AddressOfStackVariable _
   | Allocated _
   | Closure _
+  | DynamicType _
   | Invalid _
   | StdVectorReserve
   | WrittenTo _ ->
       false
+
+
+let map_trace ~f = function
+  | Allocated (procname, trace) ->
+      Allocated (procname, f trace)
+  | Invalid (invalidation, trace) ->
+      Invalid (invalidation, f trace)
+  | MustBeValid trace ->
+      MustBeValid (f trace)
+  | WrittenTo trace ->
+      WrittenTo (f trace)
+  | ( AddressOfCppTemporary _
+    | AddressOfStackVariable _
+    | Closure _
+    | DynamicType _
+    | StdVectorReserve ) as attr ->
+      attr

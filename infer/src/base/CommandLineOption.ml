@@ -592,7 +592,7 @@ let normalize_path_in_args_being_parsed ?(f = Fn.id) ~is_anon_arg str =
        [Arg.parse_argv_dynamic ~current:arg_being_parsed !args_to_parse ...]. *)
     let root = Unix.getcwd () in
     let abs_path = Utils.filename_to_absolute ~root str in
-    !args_to_parse.((!arg_being_parsed + if is_anon_arg then 0 else 1)) <- f abs_path ;
+    !args_to_parse.(!arg_being_parsed + if is_anon_arg then 0 else 1) <- f abs_path ;
     abs_path )
   else str
 
@@ -737,7 +737,7 @@ let normalize_desc_list speclist =
 
 
 let mk_command_doc ~title ~section ~version ~date ~short_description ~synopsis ~description ?options
-    ?exit_status ?environment ?files ?notes ?bugs ?examples ~see_also command_str =
+    ?exit_status ?environment ?files ?notes ?bugs ?examples ?see_also command_str =
   let add_if section blocks =
     match blocks with None -> `Blocks [] | Some bs -> `Blocks (`S section :: bs)
   in
@@ -758,8 +758,7 @@ let mk_command_doc ~title ~section ~version ~date ~short_description ~synopsis ~
     ; add_if manpage_s_notes notes
     ; add_if Cmdliner.Manpage.s_bugs bugs
     ; add_if Cmdliner.Manpage.s_examples examples
-    ; `S Cmdliner.Manpage.s_see_also
-    ; `Blocks see_also ]
+    ; add_if Cmdliner.Manpage.s_see_also see_also ]
   in
   let command_doc =
     { title= (command_str, section, date, version, title)
@@ -1001,7 +1000,8 @@ let parse_args ~usage initial_action ?initial_command args =
            anymore *)
         assert false
   in
-  parse_loop () ; curr_usage
+  parse_loop () ;
+  curr_usage
 
 
 let keep_args_file = ref false

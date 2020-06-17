@@ -27,9 +27,7 @@ module MockTraceElem = struct
 
 
   module Kind = struct
-    type nonrec t = t
-
-    let compare = compare
+    type nonrec t = t [@@deriving compare]
 
     let matches = matches
 
@@ -37,9 +35,7 @@ module MockTraceElem = struct
   end
 
   module Set = PrettyPrintable.MakePPSet (struct
-    type nonrec t = t
-
-    let compare = compare
+    type nonrec t = t [@@deriving compare]
 
     let pp = pp
   end)
@@ -71,7 +67,7 @@ module MockSink = struct
   let equal = [%compare.equal: t]
 end
 
-module MockTrace = Trace.Make (struct
+module MockTrace = TaintTrace.Make (struct
   module Source = MockSource
   module Sink = MockSink
   module Sanitizer = Sanitizer.Dummy

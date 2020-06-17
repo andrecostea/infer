@@ -50,9 +50,7 @@ let compare (rc1 : t) (rc2 : t) =
 
 
 module Set = Caml.Set.Make (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 end)
 
 let is_inst_rearrange node =
@@ -210,4 +208,5 @@ let pp_dotty fmt cycle =
 let write_dotty_to_file fname cycle =
   let chan = Out_channel.create fname in
   let fmt = Format.formatter_of_out_channel chan in
-  pp_dotty fmt cycle ; Out_channel.close chan
+  pp_dotty fmt cycle ;
+  Out_channel.close chan

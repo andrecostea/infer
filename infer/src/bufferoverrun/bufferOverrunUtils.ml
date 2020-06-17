@@ -8,6 +8,7 @@
 open! IStd
 open AbsLoc
 open! AbstractDomain.Types
+module BoSummary = BufferOverrunAnalysisSummary
 module L = Logging
 module Dom = BufferOverrunDomain
 module PO = BufferOverrunProofObligations
@@ -22,10 +23,11 @@ module ModelEnv = struct
     ; node_hash: int
     ; location: Location.t
     ; tenv: Tenv.t
-    ; integer_type_widths: Typ.IntegerWidths.t }
+    ; integer_type_widths: Typ.IntegerWidths.t
+    ; get_summary: BoSummary.get_summary }
 
-  let mk_model_env pname ~node_hash location tenv integer_type_widths =
-    {pname; node_hash; location; tenv; integer_type_widths}
+  let mk_model_env pname ~node_hash location tenv integer_type_widths get_summary =
+    {pname; node_hash; location; tenv; integer_type_widths; get_summary}
 end
 
 module Exec = struct
@@ -103,7 +105,9 @@ module Exec = struct
   let init_c_array_fields {pname; node_hash; tenv; integer_type_widths} path typ locs ?dyn_length
       mem =
     let rec init_field path locs dimension ?dyn_length (mem, inst_num) (field_name, field_typ, _) =
-      let field_path = Option.map path ~f:(fun path -> Symb.SymbolPath.field path field_name) in
+      let field_path =
+        Option.map path ~f:(fun path -> Symb.SymbolPath.append_field path field_name)
+      in
       let field_loc = PowLoc.append_field locs ~fn:field_name in
       let mem =
         match field_typ.Typ.desc with
@@ -285,7 +289,7 @@ module Check = struct
     let arr =
       if Language.curr_language_is Java then
         let arr_locs = Sem.eval_locs array_exp mem in
-        if PowLoc.is_empty arr_locs then Dom.Val.Itv.top else Dom.Mem.find_set arr_locs mem
+        if PowLoc.is_bot arr_locs then Dom.Val.Itv.top else Dom.Mem.find_set arr_locs mem
       else Sem.eval_arr integer_type_widths array_exp mem
     in
     let latest_prune = Dom.Mem.get_latest_prune mem in

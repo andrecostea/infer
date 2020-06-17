@@ -46,7 +46,7 @@ let test_from_string =
 
 
 let test_anonymous =
-  "test_from_string"
+  "test_anonymous"
   >:: fun _ ->
   (* If it is not an anonymous class, we expect this to return None *)
   get_user_defined_class_if_anonymous_inner
@@ -80,6 +80,27 @@ let test_anonymous =
   |> assert_some
   |> assert_equal_to ~expected_package:(Some "some.package")
        ~expected_classname:"SomeClass$NestedClass$AgainNestedClass" ;
+  (* Some name inside of anonymous - this is still anonymous  *)
+  get_user_defined_class_if_anonymous_inner
+    (make ~package:(Some "some.package") ~classname:"SomeClass$1$SomeName")
+  |> assert_some
+  |> assert_equal_to ~expected_package:(Some "some.package") ~expected_classname:"SomeClass" ;
+  (* Some names inside anonymous classes - should still return the innermost user defined *)
+  get_user_defined_class_if_anonymous_inner
+    (make ~package:(Some "some.package") ~classname:"A$B$1$C$2")
+  |> assert_some
+  |> assert_equal_to ~expected_package:(Some "some.package") ~expected_classname:"A$B" ;
+  (* Pathological case - this is anonymous class on the outer level. Should return None because it is not inner. *)
+  get_user_defined_class_if_anonymous_inner (make ~package:(Some "some.package") ~classname:"23")
+  |> assert_none ;
+  (* Pathological case - this is anonymous class on the outer level. Should return None because it is not inner. *)
+  get_user_defined_class_if_anonymous_inner (make ~package:(Some "some.package") ~classname:"1$A")
+  |> assert_none ;
+  (* If it is a lambda class, we expect this to be detected *)
+  get_user_defined_class_if_anonymous_inner
+    (make ~package:(Some "some.package") ~classname:"SomeClass$Lambda$_4_1")
+  |> assert_some
+  |> assert_equal_to ~expected_package:(Some "some.package") ~expected_classname:"SomeClass" ;
   (* If package was empty, everything should still work *)
   get_user_defined_class_if_anonymous_inner
     (make ~package:None ~classname:"SomeClass$NestedClass$AgainNestedClass$17$23$1")
@@ -88,4 +109,18 @@ let test_anonymous =
        ~expected_classname:"SomeClass$NestedClass$AgainNestedClass"
 
 
-let tests = "JavaClassNameTests" >::: [test_from_string; test_anonymous]
+let test_outer =
+  "test_outer"
+  >:: fun _ ->
+  get_outer_class_name (make ~package:(Some "some.package") ~classname:"SomeClass") |> assert_none ;
+  get_outer_class_name (make ~package:(Some "some.package") ~classname:"SomeClass$NestedClass")
+  |> assert_some
+  |> assert_equal_to ~expected_package:(Some "some.package") ~expected_classname:"SomeClass" ;
+  get_outer_class_name
+    (make ~package:(Some "some.package") ~classname:"SomeClass$NestedClass$AnotherNested")
+  |> assert_some
+  |> assert_equal_to ~expected_package:(Some "some.package")
+       ~expected_classname:"SomeClass$NestedClass"
+
+
+let tests = "JavaClassNameTests" >::: [test_from_string; test_anonymous; test_outer]

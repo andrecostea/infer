@@ -9,15 +9,27 @@ open! IStd
 module F = Format
 
 module Trust = struct
-  type t = All | Only of Typ.name list [@@deriving compare, equal]
+  type trust_list = JavaClassName.Set.t [@@deriving compare, equal]
 
-  let none = Only []
+  type t = All | Only of trust_list [@@deriving compare, equal]
+
+  let is_trust_none trust_list = JavaClassName.Set.is_empty trust_list
+
+  let none = Only JavaClassName.Set.empty
 
   let extract_trust_list = function
     | Annot.Array class_values ->
         (* The only elements of this array can be class names; therefore short-circuit and return None if it's not the case. *)
-        IList.traverse_opt class_values ~f:(fun el ->
-            match el with Annot.Class class_typ -> Typ.name class_typ | _ -> None )
+        let trust_list =
+          IList.traverse_opt class_values ~f:(fun el ->
+              match el with
+              | Annot.Class class_typ ->
+                  Typ.name class_typ
+                  |> Option.map ~f:(fun name -> Typ.Name.Java.get_java_class_name_exn name)
+              | _ ->
+                  None )
+        in
+        Option.map trust_list ~f:JavaClassName.Set.of_list
     | _ ->
         None
 
@@ -36,15 +48,47 @@ module Trust = struct
         None
 
 
-  let is_trusted_name t name =
-    match t with All -> true | Only classes -> List.exists classes ~f:(Typ.Name.equal name)
+  let is_in_trust_list t name =
+    match t with
+    | All ->
+        (* We are interested only in explicit lists *)
+        false
+    | Only classes ->
+        JavaClassName.Set.exists (JavaClassName.equal name) classes
+
+
+  let is_stricter ~stricter ~weaker =
+    let is_stricter_trust_list stricter_set weaker_set =
+      (* stricter trust list should be a strict subset of the weaker one *)
+      JavaClassName.Set.cardinal stricter_set < JavaClassName.Set.cardinal weaker_set
+      && JavaClassName.Set.subset stricter_set weaker_set
+    in
+    match (stricter, weaker) with
+    | All, All | All, Only _ ->
+        false
+    | Only _, All ->
+        true
+    | Only stricter_trust_list, Only weaker_trust_list ->
+        is_stricter_trust_list stricter_trust_list weaker_trust_list
+
+
+  let intersect trust1 trust2 =
+    match (trust1, trust2) with
+    | Only classes, All ->
+        Only classes
+    | All, Only classes ->
+        Only classes
+    | Only list1, Only list2 ->
+        Only (JavaClassName.Set.inter list1 list2)
+    | All, All ->
+        All
 
 
   let pp fmt t =
     match t with
     | All ->
         F.fprintf fmt "all"
-    | Only [] ->
+    | Only names when JavaClassName.Set.is_empty names ->
         F.fprintf fmt "none"
     | Only _names ->
         F.fprintf fmt "selected"
@@ -82,8 +126,14 @@ let of_annot annot =
       None
 
 
-let of_class tenv typ_name =
-  match PatternMatch.type_name_get_annotation tenv typ_name with
+let extract_user_defined_class_name java_class_name =
+  (* Anonymous inner classes are not proper classes and can not be annotated. Refer to underlying user class *)
+  JavaClassName.get_user_defined_class_if_anonymous_inner java_class_name
+  |> Option.value ~default:java_class_name
+
+
+let extract_mode_from_explicit_class_annotation tenv classname =
+  match PatternMatch.type_name_get_annotation tenv (Typ.JavaClass classname) with
   | Some annots -> (
       if Annotations.ia_is_nullsafe_strict annots then Strict
       else
@@ -97,6 +147,33 @@ let of_class tenv typ_name =
       Default
 
 
+(** Get the minimal mode that is stricter or equal than both of given modes *)
+let intersect mode1 mode2 =
+  match (mode1, mode2) with
+  | Strict, _ | _, Strict ->
+      Strict
+  | Local trust1, Local trust2 ->
+      Local (Trust.intersect trust1 trust2)
+  | Local trust, Default | Default, Local trust ->
+      Local trust
+  | Default, Default ->
+      Default
+
+
+let of_class tenv class_name =
+  (* The mode of the class is the strictest over this class's mode annotation and its outer classes *)
+  let rec of_class_and_outer_classes class_name =
+    let curr_class_mode = extract_mode_from_explicit_class_annotation tenv class_name in
+    match JavaClassName.get_outer_class_name class_name with
+    | Some outer_name ->
+        intersect curr_class_mode (of_class_and_outer_classes outer_name)
+    | None ->
+        curr_class_mode
+  in
+  let user_defined_class = extract_user_defined_class_name class_name in
+  of_class_and_outer_classes user_defined_class
+
+
 let of_procname tenv pname =
   let class_name =
     match pname with
@@ -105,11 +182,64 @@ let of_procname tenv pname =
     | _ ->
         Logging.die InternalError "Unexpected non-Java procname %a" Procname.pp pname
   in
-  of_class tenv class_name
+  of_class tenv (Typ.Name.Java.get_java_class_name_exn class_name)
 
 
-let is_trusted_name t name =
-  match t with Strict -> false | Default -> true | Local trust -> Trust.is_trusted_name trust name
+let is_stricter_than ~stricter ~weaker =
+  let strict_level mode = match mode with Default -> 0 | Local _ -> 1 | Strict -> 2 in
+  match (stricter, weaker) with
+  | Local stricter_trust, Local weaker_trust ->
+      Trust.is_stricter ~stricter:stricter_trust ~weaker:weaker_trust
+  | _ ->
+      strict_level stricter > strict_level weaker
+
+
+type nested_class_annotation_problem =
+  | RedundantNestedClassAnnotation
+  | NestedModeIsWeaker of weak_type
+
+and weak_type = ExtraTrustClass of JavaClassName.t list | Other
+
+let check_problematic_class_annotation tenv user_defined_class =
+  if JavaClassName.is_anonymous_inner_class_name user_defined_class then
+    Logging.die InternalError
+      "check_problematic_class_annotation: should not be called for anonymous classes, but was \
+       called for %a"
+      JavaClassName.pp user_defined_class ;
+  Option.value_map
+    (JavaClassName.get_outer_class_name user_defined_class)
+    ~f:(fun outer_class_name ->
+      (* Check if the mode of the nested class contradicts the outer's one or is redundant *)
+      let nested_mode = extract_mode_from_explicit_class_annotation tenv user_defined_class in
+      if equal Default nested_mode then (* Nested class is not explicitly annotated. *)
+        Ok ()
+      else
+        let outer_mode = of_class tenv outer_class_name in
+        if equal nested_mode outer_mode then Error RedundantNestedClassAnnotation
+        else
+          match (nested_mode, outer_mode) with
+          | Local (Trust.Only nested_trust_list), Local (Trust.Only outer_trust_list) ->
+              (* Special processing for pair of two Trust(some).
+                 The problem if when there is an attempt to introduce additional trust in nested that did not exist
+                 in outer.
+              *)
+              let extra_trusted_classes_in_nested =
+                JavaClassName.Set.diff nested_trust_list outer_trust_list
+              in
+              if not (JavaClassName.Set.is_empty extra_trusted_classes_in_nested) then
+                Error
+                  (NestedModeIsWeaker
+                     (ExtraTrustClass (JavaClassName.Set.elements extra_trusted_classes_in_nested)))
+              else Ok ()
+          | _ ->
+              if is_stricter_than ~stricter:outer_mode ~weaker:nested_mode then
+                Error (NestedModeIsWeaker Other)
+              else Ok () )
+    ~default:(Ok ())
+
+
+let is_in_trust_list t name =
+  match t with Strict | Default -> false | Local trust -> Trust.is_in_trust_list trust name
 
 
 let severity = function
@@ -117,7 +247,7 @@ let severity = function
       (* Explicit @Nullsafe modes suppose that enforcement is made on CI side to not allow violations in the codebase.
          Hence it should be an error.
       *)
-      Exceptions.Error
+      IssueType.Error
   | Default ->
       (* Enforcement is not supposed to be setup in default modes. *)
-      Exceptions.Warning
+      IssueType.Warning

@@ -7,9 +7,27 @@
 
 open! IStd
 
-(** type of string used for localisation *)
+(** visibility of the issue type *)
+type visibility =
+  | User  (** always add to error log *)
+  | Developer  (** only add to error log in some debug modes *)
+  | Silent  (** never add to error log *)
+[@@deriving compare, equal]
+
+val string_of_visibility : visibility -> string
+
+(** severity of the report *)
+type severity = Like | Info | Advice | Warning | Error [@@deriving compare, equal, enumerate]
+
+val string_of_severity : severity -> string
+
 type t = private
   { unique_id: string
+  ; checker: Checker.t
+  ; visibility: visibility
+  ; user_documentation: string option
+  ; mutable default_severity: severity
+        (** used for documentation but can be overriden at report time *)
   ; mutable enabled: bool
   ; mutable hum: string
   ; mutable doc_url: string option
@@ -24,19 +42,34 @@ val all_issues : unit -> t list
 val pp : Format.formatter -> t -> unit
 (** pretty print a localised string *)
 
+val find_from_string : id:string -> t option
+(** return the issue type if it was previously registered *)
+
 val register_from_string :
-  ?enabled:bool -> ?hum:string -> ?doc_url:string -> ?linters_def_file:string -> string -> t
+     ?enabled:bool
+  -> ?is_cost_issue:bool
+  -> ?hum:string
+  -> ?doc_url:string
+  -> ?linters_def_file:string
+  -> id:string
+  -> ?visibility:visibility
+  -> ?user_documentation:string
+  -> severity
+  -> Checker.t
+  -> t
 (** Create a new issue and register it in the list of all issues. NOTE: if the issue with the same
     string id is already registered, overrides `hum`, `doc_url`, and `linters_def_file`, but DOES
     NOT override `enabled`. This trick allows to deal with disabling/enabling dynamic AL issues from
     the config, when we don't know all params yet. Thus, the human-readable description can be
     updated when we encounter the definition of the issue type, eg in AL. *)
 
+val checker_can_report : Checker.t -> t -> bool
+(** Whether the issue was registered as coming from the given checker. Important to call this before
+    reporting to keep documentation accurate. *)
+
 val set_enabled : t -> bool -> unit
 
 val abduction_case_not_implemented : t
-
-val analysis_stops : t
 
 val array_of_pointsto : t
 
@@ -50,7 +83,11 @@ val assert_failure : t
 
 val bad_footprint : t
 
-val biabd_use_after_free : t
+val biabduction_analysis_stops : t
+
+val biabd_condition_always_false : t
+
+val biabd_condition_always_true : t
 
 val buffer_overrun_l1 : t
 
@@ -97,13 +134,7 @@ val checkers_printf_args : t
 
 val class_cast_exception : t
 
-val class_load : t
-
-val codequery : t
-
-val comparing_floats_for_equality : t
-
-val complexity_increase : kind:CostKind.t -> is_on_cold_start:bool -> is_on_ui_thread:bool -> t
+val complexity_increase : kind:CostKind.t -> is_on_ui_thread:bool -> t
 
 val component_factory_function : t
 
@@ -121,6 +152,8 @@ val condition_always_false : t
 
 val condition_always_true : t
 
+val config_checks_between_markers : t
+
 val constant_address_dereference : t
 
 val create_intent_from_uri : t
@@ -129,15 +162,11 @@ val cross_site_scripting : t
 
 val dangling_pointer_dereference : t
 
+val dangling_pointer_dereference_maybe : t
+
 val dead_store : t
 
 val deadlock : t
-
-val deallocate_stack_variable : t
-
-val deallocate_static_memory : t
-
-val deallocation_mismatch : t
 
 val divide_by_zero : t
 
@@ -158,6 +187,10 @@ val eradicate_inconsistent_subclass_parameter_annotation : t
 
 val eradicate_inconsistent_subclass_return_annotation : t
 
+val eradicate_redundant_nested_class_annotation : t
+
+val eradicate_bad_nested_class_annotation : t
+
 val eradicate_nullable_dereference : t
 
 val eradicate_parameter_not_nullable : t
@@ -175,8 +208,6 @@ val eradicate_meta_class_can_be_nullsafe : t
 val eradicate_meta_class_needs_improvement : t
 
 val eradicate_meta_class_is_nullsafe : t
-
-val expensive_cost_call : kind:CostKind.t -> is_on_cold_start:bool -> is_on_ui_thread:bool -> t
 
 val exposed_insecure_intent_handling : t
 
@@ -226,9 +257,13 @@ val invariant_call : t
 
 val javascript_injection : t
 
+val lab_resource_leak : t
+
 val leak_after_array_abstraction : t
 
 val leak_in_footprint : t
+
+val leak_unknown_origin : t
 
 val lockless_violation : t
 
@@ -272,17 +307,9 @@ val pure_function : t
 
 val quandary_taint_error : t
 
-val registered_observer_being_deallocated : t
-
 val resource_leak : t
 
 val retain_cycle : t
-
-val return_expression_required : t
-
-val return_statement_missing : t
-
-val return_value_ignored : t
 
 val skip_function : t
 
@@ -315,8 +342,6 @@ val topl_error : t
 val unary_minus_applied_to_unsigned_expression : t
 
 val uninitialized_value : t
-
-val unknown_proc : t
 
 val unreachable_code_after : t
 

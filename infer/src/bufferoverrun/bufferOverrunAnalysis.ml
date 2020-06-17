@@ -19,38 +19,30 @@ module OndemandEnv = BufferOverrunOndemandEnv
 module Sem = BufferOverrunSemantics
 module Trace = BufferOverrunTrace
 
-module Payload = SummaryPayload.Make (struct
-  type t = BufferOverrunAnalysisSummary.t
-
-  let field = Payloads.Fields.buffer_overrun_analysis
-end)
-
-type extras =
-  { get_summary: BufferOverrunAnalysisSummary.get_summary
+type analysis_data =
+  { interproc: BufferOverrunAnalysisSummary.t InterproceduralAnalysis.t
+  ; get_summary: BufferOverrunAnalysisSummary.get_summary
   ; get_formals: BoUtils.get_formals
   ; oenv: OndemandEnv.t }
 
 module CFG = ProcCfg.NormalOneInstrPerNode
 
 module Init = struct
-  let initial_state {ProcData.summary; tenv; extras= {get_summary; oenv}} start_node =
+  let initial_state {interproc= {proc_desc; tenv}; get_summary; oenv} start_node =
     let try_decl_local =
-      let pname = Summary.get_proc_name summary in
+      let pname = Procdesc.get_proc_name proc_desc in
       let model_env =
         let node_hash = CFG.Node.hash start_node in
         let location = CFG.Node.loc start_node in
         let integer_type_widths = oenv.OndemandEnv.integer_type_widths in
-        BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+        BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths get_summary
       in
       fun (mem, inst_num) {ProcAttributes.name; typ} ->
         let loc = Loc.of_pvar (Pvar.mk name pname) in
         BoUtils.Exec.decl_local model_env (mem, inst_num) (loc, typ)
     in
     let mem = Dom.Mem.init get_summary oenv in
-    let mem, _ =
-      List.fold ~f:try_decl_local ~init:(mem, 1)
-        (Procdesc.get_locals (Summary.get_proc_desc summary))
-    in
+    let mem, _ = List.fold ~f:try_decl_local ~init:(mem, 1) (Procdesc.get_locals proc_desc) in
     mem
 end
 
@@ -58,7 +50,7 @@ module TransferFunctions = struct
   module CFG = CFG
   module Domain = Dom.Mem
 
-  type nonrec extras = extras
+  type nonrec analysis_data = analysis_data
 
   let instantiate_latest_prune ~ret_id ~callee_exit_mem eval_sym_trace location mem =
     match
@@ -92,8 +84,8 @@ module TransferFunctions = struct
   let instantiate_mem_reachable (ret_id, ret_typ) callee_formals callee_pname params
       ~callee_exit_mem ({Dom.eval_locpath} as eval_sym_trace) mem location =
     let formal_locs =
-      List.fold callee_formals ~init:PowLoc.bot ~f:(fun acc (formal, _) ->
-          PowLoc.add (Loc.of_pvar formal) acc )
+      List.fold callee_formals ~init:LocSet.empty ~f:(fun acc (formal, _) ->
+          LocSet.add (Loc.of_pvar formal) acc )
     in
     let copy_reachable_locs_from locs mem =
       let copy loc acc =
@@ -103,7 +95,7 @@ module TransferFunctions = struct
             PowLoc.fold (fun loc acc -> Dom.Mem.add_heap loc v acc) locs acc )
       in
       let reachable_locs = Dom.Mem.get_reachable_locs_from callee_formals locs callee_exit_mem in
-      PowLoc.fold copy (PowLoc.diff reachable_locs formal_locs) mem
+      LocSet.fold copy (LocSet.diff reachable_locs formal_locs) mem
     in
     let instantiate_ret_alias mem =
       let subst_loc l =
@@ -136,7 +128,8 @@ module TransferFunctions = struct
     in
     Dom.Mem.add_stack ret_var (Dom.Val.subst ret_val eval_sym_trace location) mem
     |> instantiate_ret_alias
-    |> copy_reachable_locs_from (PowLoc.join formal_locs (Dom.Val.get_all_locs ret_val))
+    |> copy_reachable_locs_from
+         (LocSet.union formal_locs (Dom.Val.get_all_locs ret_val |> PowLoc.to_set))
     |> instantiate_latest_prune ~ret_id ~callee_exit_mem eval_sym_trace location
 
 
@@ -203,7 +196,7 @@ module TransferFunctions = struct
                 Loc.of_var (Var.of_pvar (Pvar.mk_global class_mangled))
               in
               let fn = Fieldname.make typename "$VALUES" in
-              Loc.append_field class_var ~fn
+              Loc.append_field class_var fn
             in
             let v = Dom.Mem.find loc clinit_mem in
             let mem = Dom.Mem.add_stack (Loc.of_id id) v mem in
@@ -228,15 +221,15 @@ module TransferFunctions = struct
         Option.value_map (Dom.Mem.find_opt loc from_mem) ~default:acc ~f:(fun v ->
             Dom.Mem.add_heap loc v acc )
       in
-      let reachable_locs = Dom.Mem.get_reachable_locs_from [] (PowLoc.singleton loc) from_mem in
-      PowLoc.fold copy reachable_locs to_mem
+      let reachable_locs = Dom.Mem.get_reachable_locs_from [] (LocSet.singleton loc) from_mem in
+      LocSet.fold copy reachable_locs to_mem
     in
     fun tenv get_summary exp mem ->
       Option.value_map (Exp.get_java_class_initializer tenv exp) ~default:mem
         ~f:(fun (clinit_pname, pvar, fn, field_typ) ->
           let copy_from_class_init () =
             Option.value_map (get_summary clinit_pname) ~default:mem ~f:(fun clinit_mem ->
-                let field_loc = Loc.append_field ~typ:field_typ (Loc.of_pvar pvar) ~fn in
+                let field_loc = Loc.append_field ~typ:field_typ (Loc.of_pvar pvar) fn in
                 copy_reachable_locs_from field_loc ~from_mem:clinit_mem ~to_mem:mem )
           in
           match field_typ.Typ.desc with
@@ -291,9 +284,9 @@ module TransferFunctions = struct
         Dom.Mem.add_unknown ret ~location mem
 
 
-  let exec_instr : Dom.Mem.t -> extras ProcData.t -> CFG.Node.t -> Sil.instr -> Dom.Mem.t =
-   fun mem {summary; tenv; extras= {get_summary; get_formals; oenv= {integer_type_widths}}} node
-       instr ->
+  let exec_instr : Dom.Mem.t -> analysis_data -> CFG.Node.t -> Sil.instr -> Dom.Mem.t =
+   fun mem {interproc= {proc_desc; tenv}; get_summary; get_formals; oenv= {integer_type_widths}}
+       node instr ->
     match instr with
     | Load {id} when Ident.is_none id ->
         mem
@@ -309,9 +302,10 @@ module TransferFunctions = struct
             Dom.Mem.find_set locs callee_mem )
     | Load {id; e= exp; typ; loc= location} -> (
         let model_env =
-          let pname = Summary.get_proc_name summary in
+          let pname = Procdesc.get_proc_name proc_desc in
           let node_hash = CFG.Node.hash node in
           BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+            get_summary
         in
         match modeled_load_of_empty_collection_opt exp model_env (id, typ) mem with
         | Some mem' ->
@@ -329,10 +323,11 @@ module TransferFunctions = struct
         Dom.Mem.exc_raised
     | Store {e1= tgt_exp; e2= Const (Const.Cstr _) as src; loc= location}
       when Language.curr_language_is Java ->
-        let pname = Summary.get_proc_name summary in
+        let pname = Procdesc.get_proc_name proc_desc in
         let node_hash = CFG.Node.hash node in
         let model_env =
           BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+            get_summary
         in
         let tgt_locs = Sem.eval_locs tgt_exp mem in
         let tgt_deref =
@@ -347,9 +342,10 @@ module TransferFunctions = struct
     | Store {e1= exp1; e2= Const (Const.Cstr s); loc= location} ->
         let locs = Sem.eval_locs exp1 mem in
         let model_env =
-          let pname = Summary.get_proc_name summary in
+          let pname = Procdesc.get_proc_name proc_desc in
           let node_hash = CFG.Node.hash node in
           BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+            get_summary
         in
         let do_alloc = not (Sem.is_stack_exp exp1 mem) in
         BoUtils.Exec.decl_string model_env ~do_alloc locs s mem
@@ -373,12 +369,13 @@ module TransferFunctions = struct
         in
         let mem = Dom.Mem.update_latest_prune ~updated_locs:locs exp1 exp2 mem in
         mem
-    | Prune (exp, _, _, _) ->
-        Sem.Prune.prune integer_type_widths exp mem
+    | Prune (exp, location, _, _) ->
+        Sem.Prune.prune location integer_type_widths exp mem
     | Call ((id, _), Const (Cfun callee_pname), _, _, _) when is_java_enum_values tenv callee_pname
       ->
         let mem = Dom.Mem.add_stack_loc (Loc.of_id id) mem in
-        assign_java_enum_values get_summary id ~caller_pname:(Summary.get_proc_name summary)
+        assign_java_enum_values get_summary id
+          ~caller_pname:(Procdesc.get_proc_name proc_desc)
           ~callee_pname mem
     | Call (((id, _) as ret), Const (Cfun callee_pname), params, location, _) -> (
         let mem = Dom.Mem.add_stack_loc (Loc.of_id id) mem in
@@ -391,7 +388,7 @@ module TransferFunctions = struct
             let model_env =
               let node_hash = CFG.Node.hash node in
               BoUtils.ModelEnv.mk_model_env callee_pname ~node_hash location tenv
-                integer_type_widths
+                integer_type_widths get_summary
             in
             exec model_env ~ret mem
         | None -> (
@@ -415,9 +412,10 @@ module TransferFunctions = struct
         Dom.Mem.add_unknown ret ~location mem
     | Metadata (VariableLifetimeBegins (pvar, typ, location)) when Pvar.is_global pvar ->
         let model_env =
-          let pname = Summary.get_proc_name summary in
+          let pname = Procdesc.get_proc_name proc_desc in
           let node_hash = CFG.Node.hash node in
           BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths
+            get_summary
         in
         let mem, _ = BoUtils.Exec.decl_local model_env (mem, 1) (Loc.of_pvar pvar, typ) in
         mem
@@ -443,39 +441,35 @@ let extract_post = Analyzer.extract_post
 let extract_state = Analyzer.extract_state
 
 let compute_invariant_map :
-       Summary.t
-    -> Tenv.t
-    -> Typ.IntegerWidths.t
-    -> BufferOverrunAnalysisSummary.get_summary
-    -> BoUtils.get_formals
-    -> invariant_map =
- fun summary tenv integer_type_widths get_summary get_formals ->
-  let pdesc = Summary.get_proc_desc summary in
-  let cfg = CFG.from_pdesc pdesc in
-  let pdata =
-    let oenv = OndemandEnv.mk pdesc tenv integer_type_widths in
-    ProcData.make summary tenv {get_summary; get_formals; oenv}
+    BufferOverrunAnalysisSummary.t InterproceduralAnalysis.t -> invariant_map =
+ fun ({InterproceduralAnalysis.proc_desc; tenv; exe_env; analyze_dependency} as interproc) ->
+  let cfg = CFG.from_pdesc proc_desc in
+  let analysis_data =
+    let proc_name = Procdesc.get_proc_name proc_desc in
+    let open IOption.Let_syntax in
+    let get_summary proc_name = analyze_dependency proc_name >>| snd in
+    let get_formals callee_pname =
+      AnalysisCallbacks.get_proc_desc callee_pname >>| Procdesc.get_pvar_formals
+    in
+    let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
+    let oenv = OndemandEnv.mk proc_desc tenv integer_type_widths in
+    {interproc; get_summary; get_formals; oenv}
   in
-  let initial = Init.initial_state pdata (CFG.start_node cfg) in
-  Analyzer.exec_pdesc ~do_narrowing:true ~initial pdata
+  let initial = Init.initial_state analysis_data (CFG.start_node cfg) in
+  Analyzer.exec_pdesc ~do_narrowing:true ~initial analysis_data proc_desc
 
 
 let cached_compute_invariant_map =
   let cache_get, cache_set = Procname.UnitCache.create () in
-  fun summary tenv integer_type_widths ->
-    let pname = Summary.get_proc_name summary in
+  fun ({InterproceduralAnalysis.proc_desc} as analysis_data) ->
+    let pname = Procdesc.get_proc_name proc_desc in
     match cache_get pname with
     | Some inv_map ->
         inv_map
     | None ->
-        let get_summary callee_pname = Payload.read ~caller_summary:summary ~callee_pname in
-        let get_formals callee_pname =
-          Ondemand.get_proc_desc callee_pname |> Option.map ~f:Procdesc.get_pvar_formals
-        in
-        let inv_map =
-          compute_invariant_map summary tenv integer_type_widths get_summary get_formals
-        in
-        cache_set pname inv_map ; inv_map
+        let inv_map = compute_invariant_map analysis_data in
+        cache_set pname inv_map ;
+        inv_map
 
 
 let compute_summary : (Pvar.t * Typ.t) list -> CFG.t -> invariant_map -> memory_summary =
@@ -488,14 +482,8 @@ let compute_summary : (Pvar.t * Typ.t) list -> CFG.t -> invariant_map -> memory_
       Unreachable
 
 
-let do_analysis : Callbacks.proc_callback_args -> Summary.t =
- fun {exe_env; summary} ->
-  let proc_desc = Summary.get_proc_desc summary in
-  let proc_name = Summary.get_proc_name summary in
-  let tenv = Exe_env.get_tenv exe_env proc_name in
-  let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
-  let inv_map = cached_compute_invariant_map summary tenv integer_type_widths in
+let analyze_procedure ({InterproceduralAnalysis.proc_desc} as analysis_data) =
+  let inv_map = cached_compute_invariant_map analysis_data in
   let formals = Procdesc.get_pvar_formals proc_desc in
   let cfg = CFG.from_pdesc proc_desc in
-  let payload = compute_summary formals cfg inv_map in
-  Payload.update_summary payload summary
+  Some (compute_summary formals cfg inv_map)

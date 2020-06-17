@@ -27,27 +27,6 @@ let table_has_procedure table proc_name =
   with Caml.Not_found -> false
 
 
-(* This is used outside of nullsafe for biabduction.
-   If biabduction and nullsafe want to depend on common functionality, this functionality
-   should be refactored out in a dedicated library.
- *)
-let get_modelled_annotated_signature_for_biabduction proc_attributes =
-  let proc_name = proc_attributes.ProcAttributes.proc_name in
-  let annotated_signature =
-    AnnotatedSignature.get ~is_trusted_callee:false ~nullsafe_mode:NullsafeMode.Default
-      proc_attributes
-  in
-  let proc_id = Procname.to_unique_id proc_name in
-  let lookup_models_nullable ann_sig =
-    try
-      let modelled_nullability = Hashtbl.find annotated_table_nullability proc_id in
-      AnnotatedSignature.set_modelled_nullability proc_name ann_sig InternalModel
-        modelled_nullability
-    with Caml.Not_found -> ann_sig
-  in
-  annotated_signature |> lookup_models_nullable
-
-
 let get_unique_repr proc_name =
   let java_proc_name =
     match proc_name with Procname.Java java_proc_name -> Some java_proc_name | _ -> None
@@ -65,25 +44,45 @@ let to_modelled_nullability ThirdPartyMethod.{ret_nullability; param_nullability
   (is_nullable ret_nullability, List.map param_nullability ~f:is_nullable)
 
 
+(* Some methods *)
+let get_special_method_modelled_nullability tenv proc_name =
+  let open IOption.Let_syntax in
+  let* class_name = Procname.get_class_type_name proc_name in
+  if PatternMatch.is_java_enum tenv class_name then
+    match (Procname.get_method proc_name, Procname.get_parameters proc_name) with
+    (* values() is a synthetic enum method that is never null *)
+    | "values", [] ->
+        Some (false, [])
+    (* valueOf() is a synthetic enum method that is never null *)
+    | "valueOf", [Procname.Parameter.JavaParameter param_type_name]
+      when JavaSplitName.equal param_type_name JavaSplitName.java_lang_string ->
+        Some (false, [false])
+    | _ ->
+        None
+  else None
+
+
 (** Return the annotated signature of the procedure, taking into account models. External models
     take precedence over internal ones. *)
-let get_modelled_annotated_signature ~is_trusted_callee tenv proc_attributes =
+let get_modelled_annotated_signature ~is_callee_in_trust_list tenv proc_attributes =
   let proc_name = proc_attributes.ProcAttributes.proc_name in
-  let nullsafe_mode =
-    Procname.get_class_type_name proc_name
-    |> Option.value_map ~default:NullsafeMode.Default ~f:(NullsafeMode.of_class tenv)
-  in
+  let nullsafe_mode = NullsafeMode.of_procname tenv proc_name in
   let annotated_signature =
-    AnnotatedSignature.get ~is_trusted_callee ~nullsafe_mode proc_attributes
+    AnnotatedSignature.get ~is_callee_in_trust_list ~nullsafe_mode proc_attributes
   in
   let proc_id = Procname.to_unique_id proc_name in
   (* Look in the infer internal models *)
   let correct_by_internal_models ann_sig =
-    try
-      let modelled_nullability = Hashtbl.find annotated_table_nullability proc_id in
-      AnnotatedSignature.set_modelled_nullability proc_name ann_sig InternalModel
-        modelled_nullability
-    with Caml.Not_found -> ann_sig
+    let modelled_nullability =
+      (* Look at internal model tables *)
+      Hashtbl.find_opt annotated_table_nullability proc_id
+      (* Maybe it is a special method whose nullability is predefined *)
+      |> IOption.if_none_evalopt ~f:(fun () ->
+             get_special_method_modelled_nullability tenv proc_name )
+    in
+    Option.value_map modelled_nullability
+      ~f:(AnnotatedSignature.set_modelled_nullability proc_name ann_sig InternalModel)
+      ~default:ann_sig
   in
   (* Look at external models *)
   let correct_by_external_models ann_sig =

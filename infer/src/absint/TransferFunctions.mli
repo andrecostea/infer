@@ -13,16 +13,16 @@ open! IStd
 module type S = sig
   module CFG : ProcCfg.S
 
-  module Domain : AbstractDomain.S
   (** abstract domain whose state we propagate *)
+  module Domain : AbstractDomain.S
 
   (** read-only extra state (results of previous analyses, globals, etc.) *)
-  type extras
+  type analysis_data
 
   (** type of the instructions the transfer functions operate on *)
   type instr
 
-  val exec_instr : Domain.t -> extras ProcData.t -> CFG.Node.t -> instr -> Domain.t
+  val exec_instr : Domain.t -> analysis_data -> CFG.Node.t -> instr -> Domain.t
   (** [exec_instr astate proc_data node instr] should usually return [astate'] such that
       [{astate} instr {astate'}] is a valid Hoare triple. In other words, [exec_instr] defines how
       executing an instruction from a given abstract state changes that state into a new one. This
@@ -47,7 +47,7 @@ module type DisjunctiveConfig = sig
       (** When the set of disjuncts gets bigger than [n] then just stop adding new states to it,
           drop any further states on the floor. This corresponds to an under-approximation/bounded
           approach. *)
-    | `NeverJoin  (** keep accumaluting states *) ]
+    | `NeverJoin  (** keep accumulating states *) ]
 
   val widen_policy : [`UnderApproximateAfterNumIterations of int]
 end
@@ -57,29 +57,9 @@ module type DisjReady = sig
 
   module Domain : AbstractDomain.NoJoin
 
-  type extras
+  type analysis_data
 
-  val exec_instr : Domain.t -> extras ProcData.t -> CFG.Node.t -> Sil.instr -> Domain.t list
+  val exec_instr : Domain.t -> analysis_data -> CFG.Node.t -> Sil.instr -> Domain.t list
 
   val pp_session_name : CFG.Node.t -> Format.formatter -> unit
-end
-
-(** In the disjunctive interpreter, the domain is a set of abstract states representing a
-    disjunction between these states. The transfer functions are executed on each state in the
-    disjunct independently. The join on the disjunctive state is governed by the policy described in
-    [DConfig]. *)
-module MakeDisjunctive (TransferFunctions : DisjReady) (DConfig : DisjunctiveConfig) : sig
-  module Disjuncts : sig
-    type t
-
-    val singleton : TransferFunctions.Domain.t -> t
-
-    val elements : t -> TransferFunctions.Domain.t list [@@warning "-32"]
-  end
-
-  include
-    SIL
-      with type extras = TransferFunctions.extras
-       and module CFG = TransferFunctions.CFG
-       and type Domain.t = Disjuncts.t
 end

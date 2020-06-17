@@ -10,8 +10,9 @@ open! IStd
 type t =
   | AnnotationReachability
   | Biabduction
-  | BufferOverrun
-  | ClassLoads
+  | BufferOverrunAnalysis
+  | BufferOverrunChecker
+  | ConfigChecksBetweenMarkers
   | Cost
   | Eradicate
   | FragmentRetainsView
@@ -28,32 +29,56 @@ type t =
   | Purity
   | Quandary
   | RacerD
+  | ResourceLeakLabExercise
   | RacerDFix
-  | ResourceLeak
   | SIOF
   | SelfInBlock
   | Starvation
+  | TOPL
   | Uninit
 [@@deriving equal, enumerate]
 
 (** per-language support for each checker *)
 type support =
   | NoSupport  (** checker does not run at all for this language *)
-  | Support  (** checker is expected to give reasonable results *)
   | ExperimentalSupport  (** checker runs but is not expected to give reasonable results *)
-  | ToySupport
-      (** the checker is for teaching purposes only (like experimental but with no plans to improve
-          it) *)
+  | Support  (** checker is expected to give reasonable results *)
+
+type cli_flags =
+  { deprecated: string list
+        (** More command-line flags, similar to [~deprecated] arguments in {!CommandLineOption}. *)
+  ; show_in_help: bool }
+
+type kind =
+  | UserFacing of
+      { title: string  (** the title of the documentation web page *)
+      ; markdown_body: string  (** main text of the documentation *) }
+      (** can report issues to users *)
+  | UserFacingDeprecated of
+      { title: string  (** the title of the documentation web page *)
+      ; markdown_body: string  (** main text of the documentation *)
+      ; deprecation_message: string }
+      (** can report issues to users but should probably be deleted from infer *)
+  | Internal
+      (** Analysis that only serves other analyses. Do not use to mean experimental! Please still
+          document experimental checkers as they will become non-experimental. *)
+  | Exercise  (** reserved for the "resource leak" lab exercise *)
 
 type config =
-  { support: Language.t -> support
-  ; short_documentation: string
-  ; cli_flag: string
-        (** the flag to enable this option on the command line, without the leading "--" (like the
-            [~long] argument of [CommandLineOption] functions) *)
-  ; show_in_help: bool
+  { id: string
+        (** Unique identifier. Used to generate web URLs for the documentation as well as the flag
+            to enable this option on the command line. *)
+  ; kind: kind
+  ; support: Language.t -> support
+  ; short_documentation: string  (** used in man pages and as a short intro on the website *)
+  ; cli_flags: cli_flags option
+        (** If [None] then the checker cannot be enabled/disabled from the command line. *)
   ; enabled_by_default: bool
-  ; cli_deprecated_flags: string list
-        (** more command-line flags, similar to [~deprecated] arguments *) }
+  ; activates: t list  (** list of checkers that get enabled when this checker is enabled *) }
 
 val config : t -> config
+
+val get_id : t -> string
+(** [get_id c] is [(config c).id] *)
+
+val from_id : string -> t option

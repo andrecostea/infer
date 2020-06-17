@@ -70,7 +70,7 @@ let run_compilation_database compilation_database should_capture_file =
 (** Computes the compilation database files. *)
 let get_compilation_database_files_buck db_deps ~prog ~args =
   match
-    Buck.add_flavors_to_buck_arguments (ClangCompilationDB db_deps) ~filter_kind:`Yes
+    BuckFlavors.add_flavors_to_buck_arguments (ClangCompilationDB db_deps)
       ~extra_flavors:Config.append_buck_flavors args
   with
   | {targets} when List.is_empty targets ->
@@ -86,7 +86,7 @@ let get_compilation_database_files_buck db_deps ~prog ~args =
       in
       Logging.(debug Linters Quiet)
         "Processed buck command is: 'buck %a'@\n" (Pp.seq F.pp_print_string) build_args ;
-      Process.create_process_and_wait ~prog ~args:build_args ;
+      Buck.wrap_buck_call ~label:"compdb_build" (prog :: build_args) |> ignore ;
       let buck_targets_shell =
         prog :: "targets"
         :: List.rev_append
@@ -115,9 +115,7 @@ let get_compilation_database_files_buck db_deps ~prog ~args =
             in
             List.fold ~f:scan_output ~init:[] lines
       in
-      Utils.with_process_lines
-        ~debug:L.(debug Capture Quiet)
-        ~cmd:buck_targets_shell ~tmp_prefix:"buck_targets_" ~f:on_target_lines
+      Buck.wrap_buck_call ~label:"compdb_targets" buck_targets_shell |> on_target_lines
   | _ ->
       Process.print_error_and_exit "Incorrect buck command: %s %a. Please use buck build <targets>"
         prog (Pp.seq F.pp_print_string) args
@@ -125,7 +123,7 @@ let get_compilation_database_files_buck db_deps ~prog ~args =
 
 (** Compute the compilation database files. *)
 let get_compilation_database_files_xcodebuild ~prog ~args =
-  let tmp_file = Filename.temp_file ~in_dir:Config.temp_dir "cdb" ".json" in
+  let tmp_file = Filename.temp_file ~in_dir:(ResultsDir.get_path Temporary) "cdb" ".json" in
   let xcodebuild_prog, xcodebuild_args = (prog, prog :: args) in
   let xcpretty_prog = "xcpretty" in
   let xcpretty_args =
@@ -155,7 +153,3 @@ let capture_files_in_database ~changed_files compilation_database =
         fun source_file -> SourceFile.Set.mem source_file changed_files_set
   in
   run_compilation_database compilation_database filter_changed
-
-
-let capture_file_in_database compilation_database source_file =
-  run_compilation_database compilation_database (SourceFile.equal source_file)

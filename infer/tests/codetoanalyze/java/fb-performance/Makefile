@@ -5,9 +5,11 @@
 
 TESTS_DIR = ../../..
 
-INFER_OPTIONS = --cost-only --bufferoverrun --debug-exceptions --use-cost-threshold \
+INFER_OPTIONS = --cost-only --bufferoverrun --debug-exceptions \
   --report-force-relative-path
 INFERPRINT_OPTIONS = --issues-tests
+INFERPRINT_COST_OPTIONS = --cost-issues-tests
 SOURCES = $(wildcard *.java)
 
 include $(TESTS_DIR)/javac.make
+include $(TESTS_DIR)/cost.make

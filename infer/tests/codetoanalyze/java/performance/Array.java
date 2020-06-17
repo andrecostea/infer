@@ -10,7 +10,7 @@ import java.util.Arrays;
 
 public class Array {
 
-  public void array_access_good() {
+  public void array_access_constant() {
     float[] radii = new float[8];
     for (int i = 0; i < 4; ++i) {
       radii[i * 2] = radii[i];
@@ -18,7 +18,7 @@ public class Array {
     }
   }
 
-  public void array_access_overrun_bad() {
+  public void array_access_overrun_constant() {
     float[] radii = new float[8];
     for (int i = 0; i < 4; ++i) {
       radii[i * 2] = radii[i];
@@ -26,7 +26,7 @@ public class Array {
     }
   }
 
-  void array_access_weird_ok(long[] optionNumerators, int length) {
+  void array_access_weird_linear(long[] optionNumerators, int length) {
     for (int j = 0; j < length; ++j) {
       if (10 < optionNumerators[j] + 1) {}
     }
@@ -49,7 +49,7 @@ public class Array {
     String[] new_arr = Arrays.copyOf(arr, 10);
   }
 
-  void init_array_linear() {
+  void init_array_constant() {
     int[] table = new int[256];
     for (int i = 0; i < table.length; ++i) {
       table[i] = i;
@@ -82,6 +82,10 @@ public class Array {
     for (int i = 0; i < r.length; i++) {}
   }
 
+  // Inferbo abstracts allocated memory locations to allocation sites
+  // (program points) and only keeps one location. This is a FP
+  // because our domain cannot express joining of two symbolic values
+  // and gives Top instead.
   void call_gen_and_iter_types_linear_FP(int x, int y) {
     String[] r1 = gen_and_iter_types(x);
     String[] r2 = gen_and_iter_types(y);

@@ -7,5 +7,5 @@
 
 open! IStd
 
-val capture : string list -> unit
+val capture : BuckMode.t -> string list -> unit
 (** do genrule capture with the given buck command line *)

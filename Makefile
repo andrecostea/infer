@@ -41,6 +41,7 @@ BUILD_SYSTEMS_TESTS += \
   linters \
   project_root_rel \
   reactive \
+  results_xml \
   run_hidden_linters \
   tracebugs \
   utf8_in_procname \
@@ -52,16 +53,15 @@ BUILD_SYSTEMS_TESTS += \
 DIRECT_TESTS += \
   c_biabduction \
   c_bufferoverrun \
-  c_errors \
   c_frontend \
   c_performance \
   c_pulse \
   c_purity \
   c_uninit \
   cpp_annotation-reachability \
+  cpp_biabduction \
   cpp_bufferoverrun \
   cpp_conflicts \
-  cpp_errors \
   cpp_frontend \
   cpp_impurity \
   cpp_linters \
@@ -105,7 +105,7 @@ BUILD_SYSTEMS_TESTS += \
   objc_retain_cycles_weak
 
 DIRECT_TESTS += \
-  objc_errors \
+  objc_biabduction \
   objc_frontend \
   objc_ioslints \
   objc_linters \
@@ -117,7 +117,7 @@ DIRECT_TESTS += \
   objc_quandary \
   objc_self-in-block \
   objc_uninit \
-  objcpp_errors \
+  objcpp_biabduction \
   objcpp_frontend \
   objcpp_linters \
   objcpp_linters-for-test-only \
@@ -154,18 +154,18 @@ BUILD_SYSTEMS_TESTS += \
 
 DIRECT_TESTS += \
   java_annotreach \
+  java_biabduction \
   java_bufferoverrun \
   java_checkers \
-  java_classloads \
-  java_nullsafe-default \
+  java_nullsafe \
   java_hoisting \
   java_hoistingExpensive \
   java_impurity \
   java_inefficientKeysetIterator \
-  java_infer \
   java_litho-required-props \
   java_performance \
   java_performance-exclusive \
+  java_pulse \
   java_purity \
   java_quandary \
   java_racerd \
@@ -175,7 +175,9 @@ DIRECT_TESTS += \
   java_topl \
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
-DIRECT_TESTS += java_fb-performance
+DIRECT_TESTS += \
+  java_fb-gk-interaction \
+  java_fb-performance
 endif
 
 ifneq ($(ANT),no)
@@ -219,19 +221,19 @@ fb-setup:
 
 .PHONY: fmt
 fmt:
-	parallel $(OCAMLFORMAT_EXE) -i ::: $$(git diff --name-only --diff-filter=ACMRU $$(git merge-base origin/master HEAD) | grep "\.mli\?$$")
+	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $$(git diff --name-only --diff-filter=ACMRU $$(git merge-base origin/master HEAD) | grep "\.mli\?$$")
 
-DUNE_ML:=$(shell find * -name 'dune*.in' | grep -v workspace | grep -v infer-source)
+DUNE_ML:=$(shell find * -name 'dune*.in' | grep -v workspace | grep -v infer-source | grep -v infer/src/deadcode/dune.in)
 
 .PHONY: fmt_dune
 fmt_dune:
-	parallel $(OCAMLFORMAT_EXE) -i ::: $(DUNE_ML)
+	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(DUNE_ML)
 
 SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -path facebook/dependencies -or -path sledge/llvm -or -path sledge/.llvm_build \) -not -prune -or -type f -and -name '*'.ml -or -name '*'.mli 2>/dev/null)
 
 .PHONY: fmt_all
 fmt_all:
-	parallel $(OCAMLFORMAT_EXE) -i ::: $(SRC_ML) $(DUNE_ML)
+	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(SRC_ML) $(DUNE_ML)
 
 # pre-building these avoids race conditions when building, eg src_build and test_build in parallel
 .PHONY: src_build_common
@@ -486,7 +488,12 @@ COST_TESTS += \
   c_performance \
   java_hoistingExpensive \
   java_performance \
+  java_performance-exclusive \
   objc_performance \
+
+ifeq ($(IS_FACEBOOK_TREE),yes)
+   COST_TESTS += java_fb-performance
+endif
 
 .PHONY: cost_tests
 cost_tests: $(COST_TESTS:%=direct_%_test)
@@ -585,7 +592,7 @@ config_tests: test_build ocaml_unit_test validate-skel mod_dep
 	$(MAKE) endtoend_test checkCopyright
 	$(MAKE) manuals
 
-ifneq ($(filter endtoend_test,${MAKECMDGOALS}),)
+ifneq ($(filter endtoend_test,$(MAKECMDGOALS)),)
 checkCopyright: src_build
 toplevel_test: checkCopyright
 endif
@@ -709,6 +716,63 @@ else
 	$(MAKE) -C facebook install
 endif
 endif
+
+# install dynamic libraries
+# use this if you want to distribute infer binaries
+install-with-libs: install
+	test -d      '$(DESTDIR)$(libdir)'/infer/infer/libso || \
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/infer/libso
+ifneq ($(LDD),no)
+ifneq ($(PATCHELF),no)
+#	this sort of assumes Linux
+#	figure out where libgmp, libmpfr, and libsqlite3 are using ldd
+	set -x; \
+	for lib in $$($(LDD) $(INFER_BIN) \
+	              | cut -d ' ' -f 3 \
+	              | grep -e 'lib\(gmp\|mpfr\|sqlite\)'); do \
+	  $(INSTALL_PROGRAM) -C "$$lib" '$(DESTDIR)$(libdir)'/infer/infer/libso/; \
+	done
+#	update rpath of executables
+	for sofile in '$(DESTDIR)$(libdir)'/infer/infer/libso/*.so*; do \
+	  $(PATCHELF) --set-rpath '$$ORIGIN' --force-rpath "$$sofile"; \
+	done
+	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
+ifeq ($(IS_FACEBOOK_TREE),yes)
+	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
+endif
+else # ldd found but not patchelf
+	echo "ERROR: ldd (Linux?) found but not patchelf, please install patchelf" >&2; exit 1
+endif
+else # ldd not found
+ifneq ($(OTOOL),no)
+ifneq ($(INSTALL_NAME_TOOL),no)
+#	this sort of assumes osx
+#	figure out where libgmp, libmpfr, and libsqlite3 are using otool
+	set -e; \
+	set -x; \
+	for lib in $$($(OTOOL) -L $(INFER_BIN) \
+	              | cut -d ' ' -f 1 | tr -d '\t' \
+	              | grep -e 'lib\(gmp\|mpfr\|sqlite\)'); do \
+	  $(INSTALL_PROGRAM) -C "$$lib" '$(DESTDIR)$(libdir)'/infer/infer/libso/; \
+	done
+	set -x; \
+	for sofile in '$(DESTDIR)$(libdir)'/infer/infer/libso/*.dylib; do \
+	  $(INSTALL_NAME_TOOL) -add_rpath "@executable_path" "$$sofile" 2> /dev/null || true; \
+	  scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso "$$sofile"; \
+	done
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/infer 2> /dev/null || true
+	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
+ifeq ($(IS_FACEBOOK_TREE),yes)
+	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks 2> /dev/null || true
+	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
+endif
+else # install_name_tool not found
+	echo "ERROR: otool (OSX?) found but not install_name_tool, please install install_name_tool" >&2; exit 1
+endif
+else # otool not found
+	echo "ERROR: need ldd + patchelf (Linux) or otool + install_name_tool (OSX) available" >&2; exit 1
+endif
+endif # ldd
 
 # Nuke objects built from OCaml. Useful when changing the OCaml compiler, for instance.
 .PHONY: ocaml_clean
@@ -834,7 +898,7 @@ devsetup: Makefile.autoconf
 	  printf "$(TERM_INFO)  export BUILD_MODE=dev$(TERM_RESET)\n" >&2; \
 	  printf "$(TERM_INFO)  echo 'export BUILD_MODE=dev' >> \"$$shell_config_file\"$(TERM_RESET)\n" >&2; \
 	fi
-	$(QUIET)PATH=$(ORIG_SHELL_PATH); if [ "$$(ocamlc -where 2>/dev/null)" != "$$($(OCAMLC) -where)" ]; then \
+	$(QUIET)PATH='$(ORIG_SHELL_PATH)'; if [ "$$(ocamlc -where 2>/dev/null)" != "$$($(OCAMLC) -where)" ]; then \
 	  echo >&2; \
 	  echo '$(TERM_INFO)*** NOTE: The current shell is not set up for the right opam switch.$(TERM_RESET)' >&2; \
 	  echo '$(TERM_INFO)*** NOTE: Please run:$(TERM_RESET)' >&2; \
@@ -849,7 +913,7 @@ doc: src_build_common
 	$(QUIET)$(call silent_on_success,Generating infer documentation,\
 	$(MAKE_SOURCE) doc)
 # do not call the browser if we are publishing the docs
-ifeq ($(filter doc-publish,${MAKECMDGOALS}),)
+ifneq ($(NO_BROWSE_DOC),yes)
 	$(QUIET)$(call silent_on_success,Opening in browser,\
 	browse $(INFER_DIR)/_build/default/_doc/_html/index.html)
 	$(QUIET)echo "Tip: you can generate the doc for all the opam dependencies of infer like this:"
@@ -859,32 +923,28 @@ ifeq ($(filter doc-publish,${MAKECMDGOALS}),)
 endif
 
 .PHONY: doc-publish
-doc-publish: doc $(INFER_GROFF_MANUALS)
-ifeq ($(GHPAGES),no)
-	$(QUIET)echo "$(TERM_ERROR)Please set GHPAGES to a checkout of the gh-pages branch of the GitHub repo of infer$(TERM_RESET)" >&2
-	$(QUIET)exit 1
+doc-publish:
+ifeq ($(IS_FACEBOOK_TREE),yes)
+	$(QUIET)$(call silent_on_success,Cleaning up FB-only files,\
+	$(MAKE) -C $(SRC_DIR) clean; \
+	$(MAKE) -C facebook clean)
 endif
-#	sanity check to avoid cryptic error messages and potentially annoying side-effects
-	$(QUIET)if ! [ -d "$(GHPAGES)"/static/man ]; then \
-	  echo "$(TERM_ERROR)ERROR: GHPAGES doesn't seem to point to a checkout of the gh-pages branch of the GitHub repo of infer:$(TERM_RESET)" >&2; \
-	  echo "$(TERM_ERROR)ERROR:   '$(GHPAGES)/static/man' not found or not a directory.$(TERM_RESET)" >&2; \
-	  echo "$(TERM_ERROR)ERROR: Please fix this and try again.$(TERM_RESET)" >&2; \
-	  exit 1; \
-	fi
+	$(QUIET)$(call silent_on_success,Building infer and manuals,\
+	$(MAKE) $(INFER_GROFF_MANUALS))
+	$(QUIET)$(MKDIR_P) "$(WEBSITE_DIR)"/static/man/next "$(WEBSITE_DIR)"/static/odoc/next
 	$(QUIET)$(call silent_on_success,Copying man pages,\
-	$(REMOVE_DIR) "$(GHPAGES)"/static/man/*; \
+	$(REMOVE) "$(WEBSITE_DIR)"/static/man/*; \
 	for man in $(INFER_GROFF_MANUALS); do \
-	  groff -Thtml "$$man" > "$(GHPAGES)"/static/man/$$(basename "$$man").html; \
+	  groff -Thtml "$$man" > "$(WEBSITE_DIR)"/static/man/next/$$(basename "$$man").html; \
 	done)
-ifeq ($(IS_FACEBOOK_TREE),no)
+	$(QUIET)$(call silent_on_success,Building OCaml modules documentation,\
+	$(MAKE) IS_FACEBOOK_TREE=no NO_BROWSE_DOC=yes doc)
 	$(QUIET)$(call silent_on_success,Copying OCaml modules documentation,\
-	version=$$($(INFER_BIN) --version | head -1 | cut -d ' ' -f 3 | cut -c 2-); \
-	rsync -a --delete $(SRC_DIR)/_build/default/_doc/_html/ "$(GHPAGES)"/static/odoc/"$$version"; \
-	$(REMOVE) "$(GHPAGES)"/static/odoc/latest; \
-	$(LN_S) "$$version" "$(GHPAGES)"/static/odoc/latest)
-else
-	$(QUIET)echo "Not an open-source tree, skipping the API docs generation"
-endif
+	rsync -a --delete $(BUILD_DIR)/default/_doc/_html/ "$(WEBSITE_DIR)"/static/odoc/next/)
+	$(QUIET)$(call silent_on_success,Building infer,\
+	$(MAKE) src_build)
+	$(QUIET)$(call silent_on_success,Calling 'infer help --write-website',\
+	$(INFER_BIN) help --write-website "$(WEBSITE_DIR)")
 
 # print list of targets
 .PHONY: show-targets

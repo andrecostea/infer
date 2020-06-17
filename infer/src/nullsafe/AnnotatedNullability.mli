@@ -21,6 +21,7 @@ type t =
   | Nullable of nullable_origin
   | ThirdPartyNonnull
   | UncheckedNonnull of unchecked_nonnull_origin
+  | LocallyTrustedNonnull
   | LocallyCheckedNonnull
   | StrictNonnull of strict_nonnull_origin
 [@@deriving compare]
@@ -60,12 +61,15 @@ and strict_nonnull_origin =
   | PrimitiveType  (** Primitive types are non-nullable by language design *)
   | EnumValue
       (** Java enum value are statically initialized with non-nulls according to language semantics *)
+  | SyntheticField
+      (** Fake field that is not part of user codebase, but rather artifact of codegen/annotation
+          processor *)
 [@@deriving compare]
 
 val get_nullability : t -> Nullability.t
 
 val of_type_and_annotation :
-     is_trusted_callee:bool
+     is_callee_in_trust_list:bool
   -> nullsafe_mode:NullsafeMode.t
   -> is_third_party:bool
   -> Typ.t
@@ -73,7 +77,7 @@ val of_type_and_annotation :
   -> t
 (** Given the type and its annotations, returns its nullability. NOTE: it does not take into account
     models etc., so this is intended to be used as a helper function for more high-level annotation
-    processing. [is_trusted_callee] defines whether the callee class is in the caller's trust list
-    and therefore whether its nullability should be refined. *)
+    processing. [is_callee_in_trust_list] defines whether the callee class is in the caller's
+    explicitly provided trust list and therefore whether its nullability should be refined. *)
 
 val pp : Format.formatter -> t -> unit

@@ -224,16 +224,14 @@ let is_strict_mode_violation tenv pn actuals =
   Config.starvation_strict_mode && strict_mode_matcher tenv pn actuals
 
 
-let is_annotated_nonblocking ~attrs_of_pname tenv pname =
-  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname
-    Annotations.ia_is_nonblocking tenv pname
+let is_annotated_nonblocking tenv pname =
+  ConcurrencyModels.find_override_or_superclass_annotated Annotations.ia_is_nonblocking tenv pname
   |> Option.is_some
 
 
-let is_annotated_lockless ~attrs_of_pname tenv pname =
+let is_annotated_lockless tenv pname =
   let check annot = Annotations.(ia_ends_with annot lockless) in
-  ConcurrencyModels.find_override_or_superclass_annotated ~attrs_of_pname check tenv pname
-  |> Option.is_some
+  ConcurrencyModels.find_override_or_superclass_annotated check tenv pname |> Option.is_some
 
 
 let executor_type_str = "java.util.concurrent.Executor"
@@ -254,24 +252,35 @@ let schedules_work =
   fun tenv pname -> matcher tenv pname []
 
 
-let schedules_work_on_ui_thread =
+let schedules_first_arg_on_ui_thread =
   let open MethodMatcher in
   let matcher =
-    [ { default with
-        classname= "java.lang.Object"
-      ; methods=
-          [ "postOnUiThread"
-          ; "postOnUiThreadDelayed"
-          ; "postToUiThread"
-          ; "runOnUiThread"
-          ; "runOnUiThreadAsync"
-          ; "runOnUiThreadAsyncWithDelay" ] } ]
-    |> of_records
+    { default with
+      classname= "java.lang.Object"
+    ; methods=
+        [ "postOnUiThread"
+        ; "postOnUiThreadDelayed"
+        ; "postToUiThread"
+        ; "runOnUiThread"
+        ; "runOnUiThreadAsync"
+        ; "runOnUiThreadAsyncWithDelay" ] }
+    |> of_record
   in
   fun tenv pname -> matcher tenv pname []
 
 
-let schedules_work_on_bg_thread =
+let schedules_second_arg_on_ui_thread =
+  let open MethodMatcher in
+  let matcher =
+    { default with
+      classname= "android.view.View"
+    ; methods= ["post"; "postDelayed"; "postOnAnimation"] }
+    |> of_record
+  in
+  fun tenv pname -> matcher tenv pname []
+
+
+let schedules_first_arg_on_bg_thread =
   let open MethodMatcher in
   let matcher =
     [ {default with classname= "java.lang.Object"; methods= ["scheduleGuaranteedDelayed"]}
@@ -327,10 +336,10 @@ let get_run_method_from_runnable tenv runnable =
 
 
 (* Syntactically match for certain methods known to return executors. *)
-let get_returned_executor ~attrs_of_pname tenv callee actuals =
+let get_returned_executor tenv callee actuals =
   let type_check =
     lazy
-      ( attrs_of_pname callee
+      ( AnalysisCallbacks.proc_resolve_attributes callee
       |> Option.exists ~f:(fun (attrs : ProcAttributes.t) ->
              match attrs.ret_type.Typ.desc with
              | Tstruct tname | Typ.Tptr ({desc= Tstruct tname}, _) ->
@@ -390,3 +399,17 @@ let is_assume_true =
     ; { default with
         classname= "com.google.common.base.Preconditions"
       ; methods= ["checkArgument"; "checkState"] } ]
+
+
+let is_java_main_method (pname : Procname.t) =
+  let check_main_args args =
+    match args with [arg] -> JavaSplitName.(equal java_lang_string_array arg) | _ -> false
+  in
+  match pname with
+  | C _ | Linters_dummy_method | Block _ | ObjC_Cpp _ | WithBlockParameters _ ->
+      false
+  | Java java_pname ->
+      Procname.Java.is_static java_pname
+      && String.equal "main" (Procname.get_method pname)
+      && Typ.equal Typ.void (Procname.Java.get_return_typ java_pname)
+      && check_main_args (Procname.Java.get_parameters java_pname)

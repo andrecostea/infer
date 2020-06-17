@@ -6,7 +6,6 @@
  *)
 open! IStd
 module F = Format
-module CItv = PulseCItv
 module Invalidation = PulseInvalidation
 module Trace = PulseTrace
 module ValueHistory = PulseValueHistory
@@ -16,9 +15,8 @@ type t =
   | AddressOfStackVariable of Var.t * Location.t * ValueHistory.t
   | Allocated of Procname.t * Trace.t
       (** the {!Procname.t} is the function causing the allocation, eg [malloc] *)
-  | CItv of CItv.t * Trace.t
-  | BoItv of Itv.ItvPure.t
   | Closure of Procname.t
+  | DynamicType of Typ.Name.t
   | Invalid of Invalidation.t * Trace.t
   | MustBeValid of Trace.t
   | StdVectorReserve
@@ -29,6 +27,9 @@ val pp : F.formatter -> t -> unit
 
 val is_suitable_for_pre : t -> bool
 
+val map_trace : f:(Trace.t -> Trace.t) -> t -> t
+(** applies [f] to the traces found in attributes, leaving attributes without traces intact *)
+
 module Attributes : sig
   include PrettyPrintable.PPUniqRankSet with type elt = t
 
@@ -36,9 +37,9 @@ module Attributes : sig
 
   val get_closure_proc_name : t -> Procname.t option
 
-  val get_citv : t -> (CItv.t * Trace.t) option
+  val get_allocation : t -> (Procname.t * Trace.t) option
 
-  val get_bo_itv : t -> Itv.ItvPure.t option
+  val get_dynamic_type : t -> Typ.Name.t option
 
   val get_invalid : t -> (Invalidation.t * Trace.t) option
 

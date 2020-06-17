@@ -465,17 +465,26 @@ module Name = struct
 
     let java_lang_string = from_string "java.lang.String"
 
+    let get_java_class_name_opt typename =
+      match typename with JavaClass java_class_name -> Some java_class_name | _ -> None
+
+
     let get_java_class_name_exn typename =
-      match typename with
-      | JavaClass java_class_name ->
+      match get_java_class_name_opt typename with
+      | Some java_class_name ->
           java_class_name
-      | _ ->
+      | None ->
           L.die InternalError "Tried to split a non-java class name into a java split type@."
 
 
     let is_anonymous_inner_class_name_exn class_name =
       let java_class_name = get_java_class_name_exn class_name in
       JavaClassName.is_anonymous_inner_class_name java_class_name
+
+
+    let is_anonymous_inner_class_name_opt class_name =
+      get_java_class_name_opt class_name
+      |> Option.map ~f:JavaClassName.is_anonymous_inner_class_name
 
 
     let is_external t =
@@ -499,16 +508,16 @@ module Name = struct
     let is_class = function ObjcClass _ -> true | _ -> false
   end
 
-  module Set = Caml.Set.Make (struct
-    type nonrec t = t
+  module Set = PrettyPrintable.MakePPSet (struct
+    type nonrec t = t [@@deriving compare]
 
-    let compare = compare
+    let pp = pp
   end)
 
-  module Map = Caml.Map.Make (struct
-    type nonrec t = t
+  module Map = PrettyPrintable.MakePPMap (struct
+    type nonrec t = t [@@deriving compare]
 
-    let compare = compare
+    let pp = pp
   end)
 end
 

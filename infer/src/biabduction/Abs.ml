@@ -560,7 +560,8 @@ let discover_para_candidates tenv p =
         get_edges_sigma sigma_rest
     | Predicates.Hpointsto (root, se, te) :: sigma_rest ->
         let rec_flds = typ_get_recursive_flds tenv te in
-        get_edges_strexp rec_flds root se ; get_edges_sigma sigma_rest
+        get_edges_strexp rec_flds root se ;
+        get_edges_sigma sigma_rest
   in
   let rec find_all_consecutive_edges found edges_seen = function
     | [] ->
@@ -610,7 +611,8 @@ let discover_para_dll_candidates tenv p =
         get_edges_sigma sigma_rest
     | Predicates.Hpointsto (root, se, te) :: sigma_rest ->
         let rec_flds = typ_get_recursive_flds tenv te in
-        get_edges_strexp rec_flds root se ; get_edges_sigma sigma_rest
+        get_edges_strexp rec_flds root se ;
+        get_edges_sigma sigma_rest
   in
   let rec find_all_consecutive_edges found edges_seen = function
     | [] ->
@@ -859,7 +861,8 @@ let abs_rules_apply_lists tenv (p_in : Prop.normal Prop.t) : Prop.normal Prop.t 
   let p1 = abs_rules_apply_rsets tenv old_rsets p_in in
   let p2 = discover_then_abstract p1 in
   let new_rules = old_rsets @ !new_rsets in
-  set_current_rules new_rules ; p2
+  set_current_rules new_rules ;
+  p2
 
 
 let abs_rules_apply tenv (p_in : Prop.normal Prop.t) : Prop.normal Prop.t =
@@ -990,7 +993,7 @@ let check_observer_is_unsubscribed_deallocation tenv prop e =
     | _ ->
         None
   in
-  let loc = State.get_loc_exn () in
+  let loc = AnalysisState.get_loc_exn () in
   match Attribute.get_observer tenv prop e with
   | Some (Apred (Aobserver, _)) -> (
     match pvar_opt with
@@ -1006,7 +1009,7 @@ let check_observer_is_unsubscribed_deallocation tenv prop e =
       ()
 
 
-let check_junk pname tenv prop =
+let check_junk {InterproceduralAnalysis.proc_desc; err_log; tenv} prop =
   let leaks_reported = ref [] in
   let remove_junk_once fp_part fav_root sigma =
     let id_considered_reachable =
@@ -1065,7 +1068,8 @@ let check_junk pname tenv prop =
                     | _ ->
                         () ) )
               in
-              List.iter ~f:do_entry entries ; !res
+              List.iter ~f:do_entry entries ;
+              !res
             in
             L.d_decrease_indent () ;
             let is_undefined =
@@ -1138,7 +1142,7 @@ let check_junk pname tenv prop =
             let report_leak () =
               if not report_and_continue then raise exn
               else (
-                Reporting.log_issue_deprecated_using_state Exceptions.Error pname exn ;
+                BiabductionReporting.log_issue_deprecated_using_state proc_desc err_log exn ;
                 leaks_reported := alloc_attribute :: !leaks_reported )
             in
             if not ignore_leak then report_leak () ;
@@ -1197,7 +1201,7 @@ functions in Prop abstain from dropping free variables. Here, however, we can do
 atom an orphan when it contains a variable v that does not occur anywhere else in the spec. Orphans
 can be dropped. Alpha-renaming can create orphans. Thus, we will perform a best-effort fixpoint
 computation (rename, drop)*, stopping when the last drop is a no-op. *)
-let abstract_spec pname tenv spec =
+let abstract_spec ({InterproceduralAnalysis.tenv; _} as analysis_data) spec =
   let open BiabductionSummary in
   let rename spec = spec_normalize tenv spec in
   let drop spec =
@@ -1237,7 +1241,7 @@ let abstract_spec pname tenv spec =
       let toprove = AtomSet.of_list prop2.Prop.pi in
       let toprove = AtomSet.diff toprove known in
       let prop2 = Prop.set prop2 ~pi:(AtomSet.elements toprove) in
-      Prover.check_implication pname tenv prop1 prop2
+      Prover.check_implication analysis_data prop1 prop2
     in
     let rec filter kept x unseen =
       (* INV: if a is kept and b is kept or unseen then (not (implies a b)).
@@ -1254,19 +1258,20 @@ let abstract_spec pname tenv spec =
 
 (** Check whether the prop contains junk. If it does, and [Config.allowleak] is true, remove the
     junk, otherwise raise a Leak exception. *)
-let abstract_junk pname tenv prop =
+let abstract_junk analysis_data prop =
   Absarray.array_abstraction_performed := false ;
-  check_junk pname tenv prop
+  check_junk analysis_data prop
 
 
 (** Remove redundant elements in an array, and check for junk afterwards *)
-let remove_redundant_array_elements pname tenv prop =
+let remove_redundant_array_elements ({InterproceduralAnalysis.tenv; _} as analysis_data) prop =
   Absarray.array_abstraction_performed := false ;
   let prop' = Absarray.remove_redundant_elements tenv prop in
-  check_junk pname tenv prop'
+  check_junk analysis_data prop'
 
 
-let abstract_prop pname tenv ~(rename_primed : bool) ~(from_abstract_footprint : bool) p =
+let abstract_prop ({InterproceduralAnalysis.tenv; _} as analysis_data) ~(rename_primed : bool)
+    ~(from_abstract_footprint : bool) p =
   Absarray.array_abstraction_performed := false ;
   let pure_abs_p = abstract_pure_part tenv ~from_abstract_footprint:true p in
   let array_abs_p =
@@ -1278,7 +1283,7 @@ let abstract_prop pname tenv ~(rename_primed : bool) ~(from_abstract_footprint :
   let abs_p = abs_rules_apply tenv array_abs_p in
   let abs_p = abstract_gc tenv abs_p in
   (* abstraction might enable more gc *)
-  let abs_p = check_junk pname tenv abs_p in
+  let abs_p = check_junk analysis_data abs_p in
   let ren_abs_p =
     if rename_primed then Prop.prop_rename_primed_footprint_vars tenv abs_p else abs_p
   in
@@ -1344,29 +1349,30 @@ let set_footprint_for_abs (p : 'a Prop.t) (p_foot : 'a Prop.t) local_stack_pvars
 
 
 (** Abstract the footprint of prop *)
-let abstract_footprint pname (tenv : Tenv.t) (prop : Prop.normal Prop.t) : Prop.normal Prop.t =
+let abstract_footprint ({InterproceduralAnalysis.tenv; _} as analysis_data)
+    (prop : Prop.normal Prop.t) : Prop.normal Prop.t =
   let p, added_local_vars = extract_footprint_for_abs prop in
   let p_abs =
-    abstract_prop pname tenv ~rename_primed:false ~from_abstract_footprint:true
+    abstract_prop analysis_data ~rename_primed:false ~from_abstract_footprint:true
       (Prop.normalize tenv p)
   in
   let prop' = set_footprint_for_abs prop p_abs added_local_vars in
   Prop.normalize tenv prop'
 
 
-let abstract_ pname pay tenv p =
+let abstract_ analysis_data pay p =
   if pay then SymOp.pay () ;
   (* pay one symop *)
-  let p' = if !BiabductionConfig.footprint then abstract_footprint pname tenv p else p in
-  abstract_prop pname tenv ~rename_primed:true ~from_abstract_footprint:false p'
+  let p' = if !BiabductionConfig.footprint then abstract_footprint analysis_data p else p in
+  abstract_prop analysis_data ~rename_primed:true ~from_abstract_footprint:false p'
 
 
-let abstract pname tenv p = abstract_ pname true tenv p
+let abstract analysis_data p = abstract_ analysis_data true p
 
-let abstract_no_symop pname tenv p = abstract_ pname false tenv p
+let abstract_no_symop analysis_data p = abstract_ analysis_data false p
 
-let lifted_abstract pname tenv pset =
-  let f p = if Prover.check_inconsistency tenv p then None else Some (abstract pname tenv p) in
+let lifted_abstract ({InterproceduralAnalysis.tenv; _} as analysis_data) pset =
+  let f p = if Prover.check_inconsistency tenv p then None else Some (abstract analysis_data p) in
   let abstracted_pset = Propset.map_option tenv f pset in
   abstracted_pset
 

@@ -74,21 +74,15 @@ let equal i1 i2 =
 
 (** {2 Set for identifiers} *)
 module Set = Caml.Set.Make (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 end)
 
 module Map = Caml.Map.Make (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 end)
 
 module Hash = Hashtbl.Make (struct
-  type nonrec t = t
-
-  let equal = equal
+  type nonrec t = t [@@deriving equal]
 
   let hash (id : t) = Hashtbl.hash id
 end)
@@ -140,7 +134,9 @@ module NameGenerator = struct
         let stamp = NameHash.find !name_map name in
         NameHash.replace !name_map name (stamp + 1) ;
         stamp + 1
-      with Caml.Not_found -> NameHash.add !name_map name 0 ; 0
+      with Caml.Not_found ->
+        NameHash.add !name_map name 0 ;
+        0
     in
     {kind; name; stamp}
 
@@ -238,9 +234,7 @@ let to_string id = F.asprintf "%a" pp id
 let pp_name f name = F.pp_print_string f (name_to_string name)
 
 module HashQueue = Hash_queue.Make (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 
   let hash = Hashtbl.hash
 
@@ -261,4 +255,5 @@ let counts_of_sequence seq =
   let h = Hash.create (Sequence.length seq) in
   let get id = Option.value (Hash.find_opt h id) ~default:0 in
   let bump id = Hash.replace h id (1 + get id) in
-  Sequence.iter ~f:bump seq ; get
+  Sequence.iter ~f:bump seq ;
+  get

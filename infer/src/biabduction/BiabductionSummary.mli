@@ -44,8 +44,8 @@ module Jprop : sig
   (** Extract the toplevel jprop of a prop *)
 end
 
-module Visitedset : Caml.Set.S with type elt = Procdesc.Node.id * int list
 (** set of visited nodes: node id and list of lines of all the instructions *)
+module Visitedset : Caml.Set.S with type elt = Procdesc.Node.id * int list
 
 (** A spec consists of:
 
@@ -81,9 +81,9 @@ val equal_phase : phase -> phase -> bool
 
 val string_of_phase_short : phase -> string
 
-val get_specs_from_preposts : NormSpec.t list option -> Prop.normal spec list
-
 type t = {preposts: NormSpec.t list; phase: phase}
+
+val get_specs : t -> Prop.normal spec list
 
 val opt_get_phase : t option -> phase
 

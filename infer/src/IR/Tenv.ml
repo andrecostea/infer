@@ -9,8 +9,8 @@ module L = Logging
 
 (** Module for Type Environments. *)
 
-module TypenameHash = Caml.Hashtbl.Make (Typ.Name)
 (** Hash tables on type names. *)
+module TypenameHash = Caml.Hashtbl.Make (Typ.Name)
 
 module TypenameHashNormalizer = MaximumSharing.ForHashtbl (TypenameHash)
 
@@ -113,7 +113,8 @@ let merge_per_file ~src ~dst =
   | Global, Global ->
       Global
   | FileLocal src_tenv, FileLocal dst_tenv ->
-      merge ~src:src_tenv ~dst:dst_tenv ; FileLocal dst_tenv
+      merge ~src:src_tenv ~dst:dst_tenv ;
+      FileLocal dst_tenv
   | Global, FileLocal _ | FileLocal _, Global ->
       L.die InternalError "Cannot merge Global tenv with FileLocal tenv"
 
@@ -130,7 +131,7 @@ let tenv_serializer : t Serialization.serializer =
 
 let global_tenv : t option ref = ref None
 
-let global_tenv_path = Config.(results_dir ^/ global_tenv_filename) |> DB.filename_from_string
+let global_tenv_path = ResultsDir.get_path JavaGlobalTypeEnvironment |> DB.filename_from_string
 
 let read path = Serialization.read_from_file tenv_serializer path
 
@@ -154,7 +155,8 @@ let store_debug_file tenv tenv_filename =
   let debug_filename = DB.filename_to_string (DB.filename_add_suffix tenv_filename ".debug") in
   let out_channel = Out_channel.create debug_filename in
   let fmt = Format.formatter_of_out_channel out_channel in
-  pp fmt tenv ; Out_channel.close out_channel
+  pp fmt tenv ;
+  Out_channel.close out_channel
 
 
 let store_debug_file_for_source source_file tenv =

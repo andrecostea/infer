@@ -10,22 +10,30 @@ module F = Format
 
 let pp_nullsafe_extra fmt Jsonbug_t.{class_name; package; meta_issue_info} =
   F.fprintf fmt "%s, %s" class_name (Option.value package ~default:"<no package>") ;
-  Option.iter meta_issue_info ~f:(fun Jsonbug_t.{num_issues; curr_nullsafe_mode} ->
-      F.fprintf fmt ", issues: %d, curr_mode: %s" num_issues
-        (Jsonbug_j.string_of_nullsafe_mode curr_nullsafe_mode) )
+  Option.iter meta_issue_info
+    ~f:(fun Jsonbug_t.{num_issues; curr_nullsafe_mode; can_be_promoted_to} ->
+      let can_be_promoted_to_str =
+        Option.value_map can_be_promoted_to
+          ~f:(fun mode -> F.sprintf ", promote_mode: %s" (Jsonbug_j.string_of_nullsafe_mode mode))
+          ~default:""
+      in
+      F.fprintf fmt ", issues: %d, curr_mode: %s%s" num_issues
+        (Jsonbug_j.string_of_nullsafe_mode curr_nullsafe_mode)
+        can_be_promoted_to_str )
+
+
+let pp_trace fmt trace comma =
+  let pp_trace_elem fmt Jsonbug_t.{description} = F.pp_print_string fmt description in
+  let trace_without_empty_descs =
+    List.filter ~f:(fun Jsonbug_t.{description} -> not (String.is_empty description)) trace
+  in
+  F.fprintf fmt "%s[%a]" comma (Pp.comma_seq pp_trace_elem) trace_without_empty_descs
 
 
 let pp_custom_of_report fmt report fields =
   let pp_custom_of_issue fmt (issue : Jsonbug_t.jsonbug) =
     let open Jsonbug_t in
     let comma_separator index = if index > 0 then ", " else "" in
-    let pp_trace fmt trace comma =
-      let pp_trace_elem fmt {description} = F.pp_print_string fmt description in
-      let trace_without_empty_descs =
-        List.filter ~f:(fun {description} -> not (String.is_empty description)) trace
-      in
-      F.fprintf fmt "%s[%a]" comma (Pp.comma_seq pp_trace_elem) trace_without_empty_descs
-    in
     let pp_field index field =
       match (field : IssuesTestField.t) with
       | BugType ->
@@ -73,7 +81,8 @@ let pp_custom_of_report fmt report fields =
           Option.iter nullsafe_extra ~f:(fun nullsafe_extra ->
               F.fprintf fmt "%s%a" (comma_separator index) pp_nullsafe_extra nullsafe_extra )
     in
-    List.iteri ~f:pp_field fields ; F.fprintf fmt "@."
+    List.iteri ~f:pp_field fields ;
+    F.fprintf fmt "@."
   in
   List.iter ~f:(pp_custom_of_issue fmt) report
 

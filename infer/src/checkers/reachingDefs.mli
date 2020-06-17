@@ -7,17 +7,17 @@
 
 open! IStd
 
-module Defs : module type of AbstractDomain.FiniteSet (Procdesc.Node)
 (** The node in which the reaching definition x := e is defined.
 
     A definition x :=e, declared at node N, reaches the current node if there is a path from node N
     to the current node such that x is not modified along the path **)
+module Defs : module type of AbstractDomain.FiniteSet (Procdesc.Node)
 
-module ReachingDefsMap : module type of AbstractDomain.Map (Var) (Defs)
 (** Map var -> its reaching definition *)
+module ReachingDefsMap : module type of AbstractDomain.Map (Var) (Defs)
 
 type invariant_map
 
-val compute_invariant_map : Summary.t -> Tenv.t -> invariant_map
+val compute_invariant_map : Procdesc.t -> invariant_map
 
 val extract_post : Procdesc.Node.id -> invariant_map -> ReachingDefsMap.t option

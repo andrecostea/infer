@@ -10,25 +10,28 @@ module F = Format
 module L = Logging
 open IResult.Let_syntax
 open PulseBasicInterface
+open PulseDomainInterface
 
-let report summary diagnostic =
+let report {InterproceduralAnalysis.proc_desc; err_log} diagnostic =
   let open Diagnostic in
-  Reporting.log_error summary ~loc:(get_location diagnostic) ~ltr:(get_trace diagnostic)
-    (get_issue_type diagnostic) (get_message diagnostic)
+  Reporting.log_issue proc_desc err_log ~loc:(get_location diagnostic) ~ltr:(get_trace diagnostic)
+    Pulse (get_issue_type diagnostic) (get_message diagnostic)
 
 
-let check_error summary = function
-  | Ok ok ->
-      ok
-  | Error diagnostic ->
-      report summary diagnostic ;
-      (* We can also continue the analysis by returning {!PulseDomain.initial} here but there might
-         be a risk we would get nonsense. This seems safer for now but TODO. *)
-      raise_notrace AbstractDomain.Stop_analysis
+let check_error_transform analysis_data ~f = function
+  | Ok astate ->
+      f astate
+  | Error (diagnostic, astate) ->
+      if PulseArithmetic.is_unsat_expensive astate then []
+      else (
+        report analysis_data diagnostic ;
+        [ExecutionDomain.AbortProgram astate] )
 
 
-let check_error_continue summary result =
-  PulseExecutionState.ContinueProgram (check_error summary result)
+let check_error_continue analysis_data result =
+  check_error_transform analysis_data
+    ~f:(fun astate -> [ExecutionDomain.ContinueProgram astate])
+    result
 
 
 let proc_name_of_call call_exp =
@@ -39,19 +42,21 @@ let proc_name_of_call call_exp =
       None
 
 
-type get_formals = Procname.t -> (Pvar.t * Typ.t) list option
-
 module PulseTransferFunctions = struct
   module CFG = ProcCfg.Normal
-  module Domain = PulseExecutionState
+  module Domain = ExecutionDomain
 
-  type extras = get_formals
+  type analysis_data = PulseSummary.t InterproceduralAnalysis.t
 
-  let interprocedural_call caller_summary ret call_exp actuals call_loc get_formals astate =
+  let interprocedural_call {InterproceduralAnalysis.analyze_dependency} ret call_exp actuals
+      call_loc astate =
     match proc_name_of_call call_exp with
     | Some callee_pname when not Config.pulse_intraprocedural_only ->
-        let formals_opt = get_formals callee_pname in
-        PulseOperations.call ~caller_summary call_loc callee_pname ~ret ~actuals ~formals_opt astate
+        let formals_opt =
+          AnalysisCallbacks.get_proc_desc callee_pname |> Option.map ~f:Procdesc.get_pvar_formals
+        in
+        let callee_data = analyze_dependency callee_pname in
+        PulseOperations.call ~callee_data call_loc callee_pname ~ret ~actuals ~formals_opt astate
     | _ ->
         L.d_printfln "Skipping indirect call %a@\n" Exp.pp call_exp ;
         PulseOperations.unknown_call call_loc (SkippedUnknownCall call_exp) ~ret ~actuals
@@ -76,17 +81,18 @@ module PulseTransferFunctions = struct
   (** [out_of_scope_access_expr] has just gone out of scope and in now invalid *)
   let exec_object_out_of_scope call_loc (pvar, typ) exec_state =
     match exec_state with
-    | PulseExecutionState.ContinueProgram astate ->
+    | ExecutionDomain.ContinueProgram astate ->
         let gone_out_of_scope = Invalidation.GoneOutOfScope (pvar, typ) in
         let* astate, out_of_scope_base = PulseOperations.eval call_loc (Exp.Lvar pvar) astate in
         (* invalidate [&x] *)
         PulseOperations.invalidate call_loc gone_out_of_scope out_of_scope_base astate
-        >>| PulseExecutionState.continue
-    | PulseExecutionState.ExitProgram _ ->
+        >>| ExecutionDomain.continue
+    | ExecutionDomain.AbortProgram _ | ExecutionDomain.ExitProgram _ ->
         Ok exec_state
 
 
-  let dispatch_call tenv summary ret call_exp actuals call_loc flags get_formals astate =
+  let dispatch_call ({InterproceduralAnalysis.tenv} as analysis_data) ret call_exp actuals call_loc
+      flags astate =
     (* evaluate all actuals *)
     let* astate, rev_func_args =
       List.fold_result actuals ~init:(astate, [])
@@ -112,17 +118,15 @@ module PulseTransferFunctions = struct
       match model with
       | Some (model, callee_procname) ->
           L.d_printfln "Found model for call@\n" ;
-          model ~caller_summary:summary ~callee_procname call_loc ~ret astate
+          model analysis_data ~callee_procname call_loc ~ret astate
       | None ->
           PerfEvent.(log (fun logger -> log_begin_event logger ~name:"pulse interproc call" ())) ;
           let only_actuals_evaled =
-            List.map
-              ~f:(fun ProcnameDispatcher.Call.FuncArg.{arg_payload; typ} -> (arg_payload, typ))
-              func_args
+            List.map func_args ~f:(fun ProcnameDispatcher.Call.FuncArg.{arg_payload; typ} ->
+                (arg_payload, typ) )
           in
           let r =
-            interprocedural_call summary ret call_exp only_actuals_evaled call_loc get_formals
-              astate
+            interprocedural_call analysis_data ret call_exp only_actuals_evaled call_loc astate
           in
           PerfEvent.(log (fun logger -> log_end_event logger ())) ;
           r
@@ -138,9 +142,72 @@ module PulseTransferFunctions = struct
         exec_state_res
 
 
-  let exec_instr (astate : Domain.t) {tenv; ProcData.summary; extras= get_formals} _cfg_node
-      (instr : Sil.instr) : Domain.t list =
+  (* [get_dealloc_from_dynamic_types vars_types loc] returns a dealloc procname and vars and
+     type needed to execute a call to dealloc for the given variables for which the dynamic type
+     is an Objective-C class. *)
+  let get_dealloc_from_dynamic_types dynamic_types_unreachable =
+    let get_dealloc (var, name) =
+      let cls_typ = Typ.mk (Typ.Tstruct name) in
+      match Var.get_ident var with
+      | Some id when Typ.is_objc_class cls_typ ->
+          let ret_id = Ident.create_fresh Ident.knormal in
+          let dealloc = Procname.make_objc_dealloc name in
+          let typ = Typ.mk_ptr cls_typ in
+          Some (ret_id, id, typ, dealloc)
+      | _ ->
+          None
+    in
+    List.filter_map ~f:get_dealloc dynamic_types_unreachable
+
+
+  (* In the case of variables that point to Objective-C classes for which we have a dynamic type, we
+     add and execute calls to dealloc. The main advantage of adding this calls
+     is that some memory could be freed in dealloc, and we would be reporting a leak on it if we
+     didn't call it. *)
+  let execute_injected_dealloc_calls analysis_data vars astate location =
+    let used_ids = Stack.keys astate |> List.filter_map ~f:(fun var -> Var.get_ident var) in
+    Ident.update_name_generator used_ids ;
+    let call_dealloc (astate_list : Domain.t list) (ret_id, id, typ, dealloc) =
+      let ret = (ret_id, Typ.void) in
+      let call_flags = CallFlags.default in
+      let call_exp = Exp.Const (Cfun dealloc) in
+      let actuals = [(Exp.Var id, typ)] in
+      let call_instr = Sil.Call (ret, call_exp, actuals, location, call_flags) in
+      L.d_printfln ~color:Pp.Orange "@\nExecuting injected instr:%a@\n@."
+        (Sil.pp_instr Pp.text ~print_types:true)
+        call_instr ;
+      List.fold
+        ~f:(fun astates (astate : Domain.t) ->
+          let astate =
+            match astate with
+            | AbortProgram _ | ExitProgram _ ->
+                [astate]
+            | ContinueProgram astate ->
+                dispatch_call analysis_data ret call_exp actuals location call_flags astate
+                |> check_error_transform analysis_data ~f:Fn.id
+          in
+          List.rev_append astate astates )
+        ~init:[] astate_list
+    in
+    let dynamic_types_unreachable =
+      PulseOperations.get_dynamic_type_unreachable_values vars astate
+    in
+    let dealloc_data = get_dealloc_from_dynamic_types dynamic_types_unreachable in
+    let ret_vars = List.map ~f:(fun (ret_id, _, _, _) -> Var.of_id ret_id) dealloc_data in
+    L.d_printfln ~color:Pp.Orange
+      "Executing injected call to dealloc for vars (%a) that are exiting the scope@."
+      (Pp.seq ~sep:"," Var.pp) vars ;
+    let astates = List.fold ~f:call_dealloc dealloc_data ~init:[Domain.ContinueProgram astate] in
+    (astates, ret_vars)
+
+
+  let exec_instr (astate : Domain.t) ({InterproceduralAnalysis.proc_desc} as analysis_data)
+      _cfg_node (instr : Sil.instr) : Domain.t list =
     match astate with
+    | AbortProgram _ ->
+        (* We can also continue the analysis with the error state here
+                 but there might be a risk we would get nonsense. *)
+        [astate]
     | ExitProgram _ ->
         (* program already exited, simply propagate the exited state upwards  *)
         [astate]
@@ -152,7 +219,7 @@ module PulseTransferFunctions = struct
             let+ astate, rhs_addr_hist = PulseOperations.eval_deref loc rhs_exp astate in
             PulseOperations.write_id lhs_id rhs_addr_hist astate
           in
-          [check_error_continue summary result]
+          check_error_continue analysis_data result
       | Store {e1= lhs_exp; e2= rhs_exp; loc} ->
           (* [*lhs_exp := rhs_exp] *)
           let event = ValueHistory.Assignment loc in
@@ -166,27 +233,54 @@ module PulseTransferFunctions = struct
             in
             match lhs_exp with
             | Lvar pvar when Pvar.is_return pvar ->
-                PulseOperations.check_address_escape loc summary.Summary.proc_desc rhs_addr
-                  rhs_history astate
+                PulseOperations.check_address_escape loc proc_desc rhs_addr rhs_history astate
             | _ ->
                 Ok astate
           in
-          [check_error_continue summary result]
-      | Prune (condition, loc, is_then_branch, if_kind) ->
-          let exec_state, cond_satisfiable =
-            PulseOperations.prune ~is_then_branch if_kind loc ~condition astate
-            |> check_error summary
-          in
-          if cond_satisfiable then
-            (* [condition] is true or unknown value: go into the branch *)
-            [Domain.continue exec_state]
-          else (* [condition] is known to be unsatisfiable: prune path *) []
+          check_error_continue analysis_data result
+      | Prune (condition, loc, _is_then_branch, _if_kind) ->
+          PulseOperations.prune loc ~condition astate
+          |> check_error_transform analysis_data ~f:(fun astate ->
+                 if PulseArithmetic.is_unsat_cheap astate then
+                   (* [condition] is known to be unsatisfiable: prune path *)
+                   []
+                 else
+                   (* [condition] is true or unknown value: go into the branch *)
+                   [Domain.ContinueProgram astate] )
       | Call (ret, call_exp, actuals, loc, call_flags) ->
-          dispatch_call tenv summary ret call_exp actuals loc call_flags get_formals astate
-          |> check_error summary
+          dispatch_call analysis_data ret call_exp actuals loc call_flags astate
+          |> check_error_transform analysis_data ~f:(fun id -> id)
       | Metadata (ExitScope (vars, location)) ->
-          let astate = PulseOperations.remove_vars vars location astate in
-          [check_error_continue summary astate]
+          let remove_vars vars astates =
+            List.fold
+              ~f:(fun astates (astate : Domain.t) ->
+                match astate with
+                | AbortProgram _ | ExitProgram _ ->
+                    [astate]
+                | ContinueProgram astate ->
+                    let astate =
+                      PulseOperations.remove_vars vars location astate
+                      |> check_error_continue analysis_data
+                    in
+                    List.rev_append astate astates )
+              ~init:[] astates
+          in
+          if Procname.is_java (Procdesc.get_proc_name proc_desc) then
+            remove_vars vars [Domain.ContinueProgram astate]
+          else
+            (* Here we add and execute calls to dealloc for Objective-C objects
+               before removing the variables *)
+            let astates, ret_vars =
+              execute_injected_dealloc_calls analysis_data vars astate location
+            in
+            (* OPTIM: avoid re-allocating [vars] when [ret_vars] is empty
+               (in particular if no ObjC objects are involved), but otherwise
+               assume [ret_vars] is potentially larger than [vars] and so
+               append [vars] to [ret_vars]. *)
+            let vars_to_remove =
+              if List.is_empty ret_vars then vars else List.rev_append vars ret_vars
+            in
+            remove_vars vars_to_remove astates
       | Metadata (VariableLifetimeBegins (pvar, _, location)) ->
           [PulseOperations.realloc_pvar pvar location astate |> Domain.continue]
       | Metadata (Abstract _ | Nullify _ | Skip) ->
@@ -196,8 +290,8 @@ module PulseTransferFunctions = struct
   let pp_session_name _node fmt = F.pp_print_string fmt "Pulse"
 end
 
-module DisjunctiveTransferFunctions =
-  TransferFunctions.MakeDisjunctive
+module DisjunctiveAnalyzer =
+  AbstractInterpreter.MakeDisjunctive
     (PulseTransferFunctions)
     (struct
       let join_policy =
@@ -207,25 +301,54 @@ module DisjunctiveTransferFunctions =
       let widen_policy = `UnderApproximateAfterNumIterations Config.pulse_widen_threshold
     end)
 
-module DisjunctiveAnalyzer = AbstractInterpreter.MakeWTO (DisjunctiveTransferFunctions)
+(* Output cases that sledge was unhappy with in files for later replay or inclusion as sledge test
+   cases. We create one file for each PID to avoid all analysis processes racing on writing to the same
+   file. *)
+let sledge_test_fmt =
+  lazy
+    (let sledge_test_output =
+       Out_channel.create
+         ( ResultsDir.get_path Debug
+         ^/ Printf.sprintf "sledge_test-%d.ml" (Pid.to_int (Unix.getpid ())) )
+     in
+     let f = F.formatter_of_out_channel sledge_test_output in
+     Epilogues.register ~description:"closing sledge debug fd" ~f:(fun () ->
+         F.pp_print_flush f () ;
+         Out_channel.close sledge_test_output ) ;
+     f )
 
-let checker {Callbacks.exe_env; summary} =
-  let tenv = Exe_env.get_tenv exe_env (Summary.get_proc_name summary) in
-  AbstractValue.init () ;
-  let pdesc = Summary.get_proc_desc summary in
-  let initial =
-    DisjunctiveTransferFunctions.Disjuncts.singleton (PulseExecutionState.mk_initial pdesc)
-  in
-  let get_formals callee_pname =
-    Ondemand.get_proc_desc callee_pname |> Option.map ~f:Procdesc.get_pvar_formals
-  in
-  let proc_data = ProcData.make summary tenv get_formals in
-  match DisjunctiveAnalyzer.compute_post proc_data ~initial with
+
+let checker ({InterproceduralAnalysis.proc_desc} as analysis_data) =
+  AbstractValue.State.reset () ;
+  let initial = [ExecutionDomain.mk_initial proc_desc] in
+  match DisjunctiveAnalyzer.compute_post analysis_data ~initial proc_desc with
   | Some posts ->
-      PulsePayload.update_summary
-        (PulseSummary.of_posts pdesc (DisjunctiveTransferFunctions.Disjuncts.elements posts))
-        summary
+      Some (PulseSummary.of_posts proc_desc posts)
   | None ->
-      summary
-  | exception AbstractDomain.Stop_analysis ->
-      summary
+      None
+  | exception exn ->
+      (* output sledge replay tests, see comment on [sledge_test_fmt] *)
+      IExn.reraise_if exn ~f:(fun () ->
+          match Exn.sexp_of_t exn with
+          | List [exn; replay] ->
+              let exn = Error.t_of_sexp exn in
+              L.internal_error "Analysis of %a FAILED:@\n@[%a@]@\n" Procname.pp
+                (Procdesc.get_proc_name proc_desc)
+                Error.pp exn ;
+              F.fprintf (Lazy.force sledge_test_fmt)
+                "@\n\
+                \    let%%expect_test _ =@\n\
+                \      Equality.replay@\n\
+                \        {|%a|} ;@\n\
+                \      [%%expect {| |}]@\n\
+                 @\n\
+                 %!"
+                Sexp.pp_hum replay ;
+              false
+          | _ | (exception _) ->
+              (* re-raise original exception *)
+              true ) ;
+      None
+
+
+let () = NS.Timer.enabled := Config.sledge_timers

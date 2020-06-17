@@ -63,7 +63,7 @@ let source_dir_get_internal_file source_dir extension =
 
 (** get the source directory corresponding to a source file *)
 let source_dir_from_source_file source_file =
-  Filename.concat Config.captured_dir (source_file_encoding source_file)
+  ResultsDir.get_path Debug ^/ source_file_encoding source_file
 
 
 (** {2 Filename} *)
@@ -126,13 +126,13 @@ module Results_dir = struct
 
 
   (** directory of spec files *)
-  let specs_dir = path_to_filename Abs_root [Config.specs_dir_name]
+  let specs_dir = ResultsDir.get_path Specs
 
   (** initialize the results directory *)
   let init ?(debug = false) source =
     if SourceFile.is_invalid source then L.(die InternalError) "Invalid source file passed" ;
     if debug || Config.html || Config.debug_mode || Config.frontend_tests then (
-      Utils.create_dir (path_to_filename Abs_root [Config.captured_dir_name]) ;
+      Utils.create_dir (ResultsDir.get_path Debug) ;
       Utils.create_dir (path_to_filename (Abs_source_dir source) []) )
 
 
@@ -148,10 +148,12 @@ module Results_dir = struct
     let rec create = function
       | [] ->
           let fname = path_to_filename pk [] in
-          Utils.create_dir fname ; fname
+          Utils.create_dir fname ;
+          fname
       | name :: names ->
           let new_path = Filename.concat (create names) name in
-          Utils.create_dir new_path ; new_path
+          Utils.create_dir new_path ;
+          new_path
     in
     let filename, dir_path =
       match List.rev path with

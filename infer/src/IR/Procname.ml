@@ -158,6 +158,10 @@ module Java = struct
     Typ.Name.Java.is_anonymous_inner_class_name_exn class_name
 
 
+  let is_anonymous_inner_class_method {class_name} =
+    Option.value ~default:false (Typ.Name.Java.is_anonymous_inner_class_name_opt class_name)
+
+
   let is_static {kind} = match kind with Static -> true | _ -> false
 
   let is_lambda {method_name} = String.is_prefix ~prefix:"lambda$" method_name
@@ -253,6 +257,8 @@ module ObjC_Cpp = struct
     {class_name; method_name; kind; template_args; parameters}
 
 
+  let make_dealloc name = make name "dealloc" ObjCInstanceMethod Typ.NoTemplate []
+
   let get_class_name objc_cpp = Typ.Name.name objc_cpp.class_name
 
   let get_class_type_name objc_cpp = objc_cpp.class_name
@@ -309,13 +315,14 @@ module ObjC_Cpp = struct
 
 
   let pp verbosity fmt osig =
+    let sep = if is_objc_method osig then "." else "::" in
     match verbosity with
     | Simple ->
         F.pp_print_string fmt osig.method_name
     | Non_verbose ->
-        F.fprintf fmt "%s::%s" (Typ.Name.name osig.class_name) osig.method_name
+        F.fprintf fmt "%s%s%s" (Typ.Name.name osig.class_name) sep osig.method_name
     | Verbose ->
-        F.fprintf fmt "%s::%s%a%a" (Typ.Name.name osig.class_name) osig.method_name
+        F.fprintf fmt "%s%s%s%a%a" (Typ.Name.name osig.class_name) sep osig.method_name
           Parameter.pp_parameters osig.parameters pp_verbose_kind osig.kind
 
 
@@ -424,8 +431,18 @@ let is_java_access_method = is_java_lift Java.is_access_method
 
 let is_java_class_initializer = is_java_lift Java.is_class_initializer
 
+let is_java_anonymous_inner_class_method = is_java_lift Java.is_anonymous_inner_class_method
+
+let is_java_autogen_method = is_java_lift Java.is_autogen_method
+
 let is_objc_method procname =
   match procname with ObjC_Cpp name -> ObjC_Cpp.is_objc_method name | _ -> false
+
+
+let is_objc_dealloc procname =
+  is_objc_method procname
+  &&
+  match procname with ObjC_Cpp {method_name} -> ObjC_Cpp.is_objc_dealloc method_name | _ -> false
 
 
 let block_name_of_procname procname =
@@ -632,12 +649,12 @@ let hashable_name proc_name =
           Str.global_replace java_inner_class_prefix_regex "$_" name
       | exception Caml.Not_found ->
           name )
-  | ObjC_Cpp m when ObjC_Cpp.is_objc_method m ->
+  | ObjC_Cpp osig when ObjC_Cpp.is_objc_method osig ->
       (* In Objective C, the list of parameters is part of the method name. To prevent the bug
          hash to change when a parameter is introduced or removed, only the part of the name
          before the first colon is used for the bug hash *)
       let name = F.asprintf "%a" (pp_simplified_string ~withclass:true) proc_name in
-      List.hd_exn (String.split_on_chars name ~on:[':'])
+      List.hd_exn (String.split name ~on:':')
   | _ ->
       (* Other cases for C and C++ method names *)
       F.asprintf "%a" (pp_simplified_string ~withclass:true) proc_name
@@ -721,12 +738,10 @@ let make_java ~class_name ~return_type ~method_name ~parameters ~kind () =
   Java (Java.make ~class_name ~return_type ~method_name ~parameters ~kind ())
 
 
+let make_objc_dealloc name = ObjC_Cpp (ObjC_Cpp.make_dealloc name)
+
 module Hashable = struct
-  type nonrec t = t
-
-  let equal = equal
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare, equal]
 
   let hash = hash
 
@@ -738,17 +753,13 @@ module LRUHash = LRUHashtbl.Make (Hashable)
 module HashQueue = Hash_queue.Make (Hashable)
 
 module Map = PrettyPrintable.MakePPMap (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 
   let pp = pp
 end)
 
 module Set = PrettyPrintable.MakePPSet (struct
-  type nonrec t = t
-
-  let compare = compare
+  type nonrec t = t [@@deriving compare]
 
   let pp = pp
 end)
@@ -788,9 +799,7 @@ let to_filename pname =
 
 module SQLite = struct
   module T = struct
-    type nonrec t = t
-
-    let compare = compare
+    type nonrec t = t [@@deriving compare]
 
     let hash = hash
 

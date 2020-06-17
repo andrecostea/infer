@@ -176,9 +176,7 @@ module Node = struct
   end)
 
   module IdMap = PrettyPrintable.MakePPMap (struct
-    type t = id
-
-    let compare = compare_id
+    type t = id [@@deriving compare]
 
     let pp = pp_id
   end)
@@ -190,6 +188,8 @@ module Node = struct
 
   (** Get the predecessors of the node *)
   let get_preds node = node.preds
+
+  let is_dangling node = List.is_empty (get_preds node) && List.is_empty (get_succs node)
 
   (** Get siblings *)
   let get_siblings node =
@@ -247,6 +247,16 @@ module Node = struct
   (** Map and replace the instructions to be executed *)
   let replace_instrs node ~f =
     let instrs' = Instrs.map node.instrs ~f:(f node) in
+    if phys_equal instrs' node.instrs then false
+    else (
+      node.instrs <- instrs' ;
+      true )
+
+
+  (** Map and replace the instructions to be executed using a context *)
+  let replace_instrs_using_context node ~f ~update_context ~context_at_node =
+    let f node context instr = (update_context context instr, f node context instr) in
+    let instrs' = Instrs.map_and_fold node.instrs ~f:(f node) ~init:context_at_node in
     if phys_equal instrs' node.instrs then false
     else (
       node.instrs <- instrs' ;
@@ -420,17 +430,17 @@ end
 
 (* =============== END of module Node =============== *)
 
-module NodeMap = Caml.Map.Make (Node)
 (** Map over nodes *)
+module NodeMap = Caml.Map.Make (Node)
 
-module NodeHash = Hashtbl.Make (Node)
 (** Hash table with nodes as keys. *)
+module NodeHash = Hashtbl.Make (Node)
 
-module NodeSet = Node.NodeSet
 (** Set of nodes. *)
+module NodeSet = Node.NodeSet
 
-module IdMap = Node.IdMap
 (** Map with node id keys. *)
+module IdMap = Node.IdMap
 
 (** procedure description *)
 type t =
@@ -555,6 +565,14 @@ let update_nodes pdesc ~(update : Node.t -> bool) : bool =
 
 let replace_instrs pdesc ~f =
   let update node = Node.replace_instrs ~f node in
+  update_nodes pdesc ~update
+
+
+let replace_instrs_using_context pdesc ~f ~update_context ~context_at_node =
+  let update node =
+    Node.replace_instrs_using_context ~f ~update_context ~context_at_node:(context_at_node node)
+      node
+  in
   update_nodes pdesc ~update
 
 

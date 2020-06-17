@@ -45,7 +45,7 @@ let compute_hash ~(severity : string) ~(bug_type : string) ~(proc_name : Procnam
 
 let loc_trace_to_jsonbug_record trace_list ekind =
   match ekind with
-  | Exceptions.Info ->
+  | IssueType.Info ->
       []
   | _ ->
       let trace_item_to_record trace_item =
@@ -59,27 +59,21 @@ let loc_trace_to_jsonbug_record trace_list ekind =
       record_list
 
 
-let should_report (issue_kind : Exceptions.severity) issue_type error_desc eclass =
-  if (not Config.filtering) || Exceptions.equal_err_class eclass Exceptions.Linters then true
+let should_report issue_type error_desc =
+  if not Config.filtering then true
   else
-    let issue_kind_is_blacklisted =
-      match issue_kind with Info -> true | Advice | Error | Like | Warning -> false
-    in
-    if issue_kind_is_blacklisted then false
-    else
-      let issue_type_is_null_deref =
-        let null_deref_issue_types =
-          let open IssueType in
-          [ field_not_null_checked
-          ; null_dereference
-          ; parameter_not_null_checked
-          ; premature_nil_termination
-          ; empty_vector_access
-          ; biabd_use_after_free ]
-        in
-        List.mem ~equal:IssueType.equal null_deref_issue_types issue_type
+    let issue_type_is_null_deref =
+      let null_deref_issue_types =
+        let open IssueType in
+        [ field_not_null_checked
+        ; null_dereference
+        ; parameter_not_null_checked
+        ; premature_nil_termination
+        ; empty_vector_access ]
       in
-      if issue_type_is_null_deref then Localise.error_desc_is_reportable_bucket error_desc else true
+      List.mem ~equal:IssueType.equal null_deref_issue_types issue_type
+    in
+    if issue_type_is_null_deref then Localise.error_desc_is_reportable_bucket error_desc else true
 
 
 (* The reason an issue should be censored (that is, not reported). The empty
@@ -162,19 +156,19 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
     in
     if SourceFile.is_invalid source_file then
       L.(die InternalError)
-        "Invalid source file for %a %a@.Trace: %a@." IssueType.pp err_key.err_name
+        "Invalid source file for %a %a@.Trace: %a@." IssueType.pp err_key.issue_type
         Localise.pp_error_desc err_key.err_desc Errlog.pp_loc_trace err_data.loc_trace ;
     let should_report_source_file =
       (not (SourceFile.is_biabduction_model source_file))
       || Config.debug_mode || Config.debug_exceptions
     in
     if
-      error_filter source_file err_key.err_name
+      error_filter source_file err_key.issue_type
       && should_report_source_file
-      && should_report err_key.severity err_key.err_name err_key.err_desc err_data.err_class
+      && should_report err_key.issue_type err_key.err_desc
     then
-      let severity = Exceptions.severity_string err_key.severity in
-      let bug_type = err_key.err_name.IssueType.unique_id in
+      let severity = IssueType.string_of_severity err_key.severity in
+      let bug_type = err_key.issue_type.unique_id in
       let file =
         SourceFile.to_string ~force_relative:Config.report_force_relative_path source_file
       in
@@ -187,7 +181,7 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
       in
       let qualifier =
         let base_qualifier = error_desc_to_plain_string err_key.err_desc in
-        if IssueType.(equal resource_leak) err_key.err_name then
+        if IssueType.(equal resource_leak) err_key.issue_type then
           match Errlog.compute_local_exception_line err_data.loc_trace with
           | None ->
               base_qualifier
@@ -214,11 +208,11 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
         ; hash= compute_hash ~severity ~bug_type ~proc_name ~file ~qualifier
         ; dotty= error_desc_to_dotty_string err_key.err_desc
         ; infer_source_loc= json_ml_loc
-        ; bug_type_hum= err_key.err_name.IssueType.hum
+        ; bug_type_hum= err_key.issue_type.hum
         ; linters_def_file= err_data.linters_def_file
         ; doc_url= err_data.doc_url
         ; traceview_id= None
-        ; censored_reason= censored_reason err_key.err_name source_file
+        ; censored_reason= censored_reason err_key.issue_type source_file
         ; access= err_data.access
         ; extras= err_data.extras }
       in
@@ -261,10 +255,14 @@ module JsonCostsPrinter = MakeJsonListPrinter (struct
           ; polynomial= CostDomain.BasicCost.encode cost
           ; degree=
               Option.map (CostDomain.BasicCost.degree cost) ~f:Polynomials.Degree.encode_to_int
-          ; hum= hum cost }
+          ; hum= hum cost
+          ; trace= loc_trace_to_jsonbug_record (CostDomain.BasicCost.polynomial_traces cost) Advice
+          }
         in
         let cost_item =
-          let file = SourceFile.to_rel_path loc.Location.file in
+          let file =
+            SourceFile.to_string ~force_relative:Config.report_force_relative_path loc.Location.file
+          in
           { Jsonbug_t.hash= compute_hash ~severity:"" ~bug_type:"" ~proc_name ~file ~qualifier:""
           ; loc= {file; lnum= loc.Location.line; cnum= loc.Location.col; enum= -1}
           ; procedure_name= Procname.get_method proc_name
@@ -294,10 +292,10 @@ let collect_issues summary issues_acc =
 
 
 let write_costs summary (outfile : Utils.outfile) =
-  JsonCostsPrinter.pp outfile.fmt
-    { loc= Summary.get_loc summary
-    ; proc_name= Summary.get_proc_name summary
-    ; cost_opt= summary.Summary.payloads.Payloads.cost }
+  let proc_name = Summary.get_proc_name summary in
+  if not (Cost.is_report_suppressed proc_name) then
+    JsonCostsPrinter.pp outfile.fmt
+      {loc= Summary.get_loc summary; proc_name; cost_opt= summary.Summary.payloads.Payloads.cost}
 
 
 (** Process lint issues of a procedure *)
@@ -308,11 +306,12 @@ let write_lint_issues filters (issues_outf : Utils.outfile) linereader procname 
 
 (** Process a summary *)
 let process_summary ~costs_outf summary issues_acc =
-  write_costs summary costs_outf ; collect_issues summary issues_acc
+  write_costs summary costs_outf ;
+  collect_issues summary issues_acc
 
 
 let process_all_summaries_and_issues ~issues_outf ~costs_outf =
-  let linereader = Printer.LineReader.create () in
+  let linereader = LineReader.create () in
   let filters = Inferconfig.create_filters () in
   let all_issues = ref [] in
   SpecsFiles.iter_from_config ~f:(fun summary ->
@@ -325,10 +324,8 @@ let process_all_summaries_and_issues ~issues_outf ~costs_outf =
         {error_filter; proc_name; proc_loc_opt= Some proc_location; err_key; err_data} )
     !all_issues ;
   (* Issues that are generated and stored outside of summaries by linter and checkers *)
-  List.iter (Config.lint_issues_dir_name :: FileLevelAnalysisIssueDirs.get_registered_dir_names ())
-    ~f:(fun dir_name ->
-      IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_issues filters issues_outf linereader)
-  ) ;
+  List.iter (ResultsDirEntryName.get_issues_directories ()) ~f:(fun dir_name ->
+      IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_issues filters issues_outf linereader) ) ;
   ()
 
 

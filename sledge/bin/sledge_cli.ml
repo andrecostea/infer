@@ -66,7 +66,7 @@ let marshal program file =
 
 let unmarshal file () =
   In_channel.with_file
-    ~f:(fun ic -> (Marshal.from_channel ic : Llair.t))
+    ~f:(fun ic -> (Marshal.from_channel ic : Llair.program))
     file
 
 let used_globals pgm preanalyze : Domain_used_globals.r =
@@ -77,14 +77,15 @@ let used_globals pgm preanalyze : Domain_used_globals.r =
         ; skip_throw= false
         ; function_summaries= true
         ; entry_points= Config.find_list "entry-points"
-        ; globals= Declared Reg.Set.empty }
+        ; globals= Declared Llair.Reg.Set.empty }
         pgm
     in
-    Per_function (Reg.Map.map summary_table ~f:Reg.Set.union_list)
+    Per_function
+      (Llair.Reg.Map.map summary_table ~f:Llair.Reg.Set.union_list)
   else
     Declared
-      (IArray.fold pgm.globals ~init:Reg.Set.empty ~f:(fun acc g ->
-           Reg.Set.add acc g.reg ))
+      (IArray.fold pgm.globals ~init:Llair.Reg.Set.empty ~f:(fun acc g ->
+           Llair.Reg.Set.add acc g.reg ))
 
 let analyze =
   let%map_open bound =
@@ -115,6 +116,8 @@ let analyze =
   and no_simplify_states =
     flag "no-simplify-states" no_arg
       ~doc:"do not simplify states during symbolic execution"
+  and stats =
+    flag "stats" no_arg ~doc:"output performance statistics to stderr"
   in
   fun program () ->
     let pgm = program () in
@@ -122,6 +125,7 @@ let analyze =
     let entry_points = Config.find_list "entry-points" in
     let skip_throw = not exceptions in
     Domain_sh.simplify_states := not no_simplify_states ;
+    Timer.enabled := stats ;
     exec {bound; skip_throw; function_summaries; entry_points; globals} pgm
 
 let analyze_cmd =
@@ -218,11 +222,11 @@ let disassemble_cmd =
     fun () ->
       let program = unmarshal input () in
       match llair_txt_output with
-      | None -> Format.printf "%a@." Llair.pp program
+      | None -> Format.printf "%a@." Llair.Program.pp program
       | Some file ->
           Out_channel.with_file file ~f:(fun oc ->
               let fs = Format.formatter_of_out_channel oc in
-              Format.fprintf fs "%a@." Llair.pp program )
+              Format.fprintf fs "%a@." Llair.Program.pp program )
   in
   command ~summary ~readme param
 
@@ -239,5 +243,6 @@ let readme () =
 Command.run ~version:Version.version ~build_info:Version.build_info
   (Command.group ~summary ~readme ~preserve_subcommand_order:()
      [ ("buck", Sledge_buck.main ~command ~analyze:(translate >*> analyze))
-     ; ("llvm", llvm_grp); ("analyze", analyze_cmd)
+     ; ("llvm", llvm_grp)
+     ; ("analyze", analyze_cmd)
      ; ("disassemble", disassemble_cmd) ])

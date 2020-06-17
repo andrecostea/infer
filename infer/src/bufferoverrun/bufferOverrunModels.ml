@@ -9,6 +9,7 @@ open! IStd
 open AbsLoc
 open! AbstractDomain.Types
 module L = Logging
+module BoField = BufferOverrunField
 module BoUtils = BufferOverrunUtils
 module Dom = BufferOverrunDomain
 module PO = BufferOverrunProofObligations
@@ -522,10 +523,15 @@ module ArrObjCommon = struct
     Sem.eval_array_locs_length (deref_of model_env exp ~fn mem) mem
 
 
-  let size_exec exp ~fn model_env ~ret:(id, _) mem =
-    let arr_locs = deref_of model_env exp ~fn mem in
-    let mem = Dom.Mem.add_stack (Loc.of_id id) (Sem.eval_array_locs_length arr_locs mem) mem in
-    load_size_alias id arr_locs mem
+  let size_exec exp ~fn ({integer_type_widths} as model_env) ~ret:(id, _) mem =
+    let locs = Sem.eval integer_type_widths exp mem |> Dom.Val.get_all_locs in
+    match PowLoc.is_singleton_or_more locs with
+    | Singleton (BoField.Prim (Loc.Allocsite (Allocsite.LiteralString s))) ->
+        model_by_value (Dom.Val.of_int (String.length s)) id mem
+    | _ ->
+        let arr_locs = deref_of model_env exp ~fn mem in
+        let mem = Dom.Mem.add_stack (Loc.of_id id) (Sem.eval_array_locs_length arr_locs mem) mem in
+        load_size_alias id arr_locs mem
 
 
   let at arr_exp ~fn index_exp =
@@ -563,7 +569,7 @@ end
 
 module StdVector = struct
   let append_field loc ~vec_typ ~elt_typ =
-    Loc.append_field loc ~fn:(BufferOverrunField.cpp_vector_elem ~vec_typ ~elt_typ)
+    Loc.append_field loc (BufferOverrunField.cpp_vector_elem ~vec_typ ~elt_typ)
 
 
   let append_fields locs ~vec_typ ~elt_typ =
@@ -622,7 +628,8 @@ module StdVector = struct
 
 
   let set_size {location} locs new_size mem =
-    Dom.Mem.transform_mem locs mem ~f:(fun v -> Dom.Val.set_array_length location ~length:new_size v)
+    Dom.Mem.transform_mem locs mem ~f:(fun v ->
+        Dom.Val.set_array_length location ~length:new_size v )
 
 
   let empty elt_typ vec_arg =
@@ -778,7 +785,7 @@ module JavaInteger = struct
   let intValue exp =
     let exec _ ~ret:(id, _) mem =
       let powloc = Sem.eval_locs exp mem in
-      let v = if PowLoc.is_empty powloc then Dom.Val.Itv.top else Dom.Mem.find_set powloc mem in
+      let v = if PowLoc.is_bot powloc then Dom.Val.Itv.top else Dom.Mem.find_set powloc mem in
       model_by_value v id mem
     in
     {exec; check= no_check}
@@ -822,7 +829,7 @@ module Collection = struct
     in
     let coll_loc = Loc.of_allocsite coll_allocsite in
     let internal_array_loc =
-      Loc.append_field coll_loc ~fn:BufferOverrunField.java_collection_internal_array
+      Loc.append_field coll_loc BufferOverrunField.java_collection_internal_array
     in
     mem
     |> Dom.Mem.add_heap internal_array_loc internal_array
@@ -854,6 +861,11 @@ module Collection = struct
     |> PowLoc.append_field ~fn:BufferOverrunField.java_collection_internal_array
 
 
+  let get_collection_internal_elements_locs coll_id mem =
+    let arr_locs = get_collection_internal_array_locs coll_id mem in
+    Dom.Mem.find_set arr_locs mem |> Dom.Val.get_all_locs
+
+
   let eval_collection_length coll_exp mem =
     let arr_locs = eval_collection_internal_array_locs coll_exp mem in
     Sem.eval_array_locs_length arr_locs mem
@@ -879,7 +891,18 @@ module Collection = struct
     |> Dom.Mem.incr_or_not_size_alias arr_locs
 
 
-  let add coll_id = {exec= change_size_by_incr coll_id; check= no_check}
+  let set_elem_exec {integer_type_widths} coll_id elem_exp mem =
+    let locs = get_collection_internal_elements_locs coll_id mem in
+    let v = Sem.eval integer_type_widths elem_exp mem in
+    Dom.Mem.update_mem locs v mem
+
+
+  let add coll_id elem_exp =
+    let exec env ~ret mem =
+      change_size_by_incr coll_id env ~ret mem |> set_elem_exec env coll_id elem_exp
+    in
+    {exec; check= no_check}
+
 
   let singleton_collection =
     let exec env ~ret:((id, _) as ret) mem =
@@ -893,6 +916,12 @@ module Collection = struct
   (** increase the size by [0, 1] because put replaces the value rather than add a new one when the
       key is found in the map *)
   let put coll_id = {exec= change_size_by_incr_or_not coll_id; check= no_check}
+
+  let put_with_elem coll_id elem_exp =
+    let put_model = put coll_id in
+    let exec env ~ret mem = put_model.exec env ~ret mem |> set_elem_exec env coll_id elem_exp in
+    {put_model with exec}
+
 
   (* The return value is set by [set_itv_updated_by_addition] in order to be sure that it can be
      used as a control variable value in the cost checker. *)
@@ -1012,9 +1041,84 @@ module Collection = struct
     {exec; check= check_index ~last_included:true coll_id index_exp}
 
 
-  let get_or_set_at_index coll_id index_exp =
-    let exec _model_env ~ret:_ mem = mem in
+  let set_at_index coll_id index_exp elem_exp =
+    let exec env ~ret:_ mem = set_elem_exec env coll_id elem_exp mem in
     {exec; check= check_index ~last_included:false coll_id index_exp}
+
+
+  let get_at_index coll_id index_exp =
+    let exec _model_env ~ret:(ret_id, _) mem =
+      let locs = get_collection_internal_elements_locs coll_id mem in
+      let v = Dom.Mem.find_set locs mem in
+      model_by_value v ret_id mem
+    in
+    {exec; check= check_index ~last_included:false coll_id index_exp}
+end
+
+module JavaClass = struct
+  let decl_array {pname; node_hash; location} ~ret:(ret_id, _) length mem =
+    let loc =
+      Allocsite.make pname ~node_hash ~inst_num:0 ~dimension:1 ~path:None
+        ~represents_multiple_values:true
+      |> Loc.of_allocsite
+    in
+    let arr_v =
+      let allocsite =
+        Allocsite.make pname ~node_hash ~inst_num:1 ~dimension:1 ~path:None
+          ~represents_multiple_values:true
+      in
+      let traces = Trace.(Set.singleton location ArrayDeclaration) in
+      Dom.Val.of_java_array_alloc allocsite ~length ~traces
+    in
+    Dom.Mem.add_heap loc arr_v mem |> model_by_value (Dom.Val.of_loc loc) ret_id
+
+
+  let get_fields class_name_exp =
+    let exec ({tenv} as model_env) ~ret mem =
+      match class_name_exp with
+      | Exp.Const (Const.Cclass name) -> (
+          let typ_name = Typ.Name.Java.from_string (Ident.name_to_string name) in
+          match Tenv.lookup tenv typ_name with
+          | Some {fields} ->
+              decl_array model_env ~ret (List.length fields |> Itv.of_int) mem
+          | None ->
+              Logging.d_printfln_escaped "Could not find class from tenv" ;
+              mem )
+      | _ ->
+          Logging.d_printfln_escaped "Parameter is not a class name constant" ;
+          mem
+    in
+    {exec; check= no_check}
+
+
+  let get_enum_constants class_name_exp =
+    let exec ({get_summary} as model_env) ~ret mem =
+      match class_name_exp with
+      | Exp.Const (Const.Cclass name) -> (
+          let enum_values_pname =
+            let class_name_str = Ident.name_to_string name in
+            Procname.make_java
+              ~class_name:(Typ.Name.Java.from_string class_name_str)
+              ~return_type:(Some (JavaSplitName.make (class_name_str ^ "[]")))
+              ~method_name:"values" ~parameters:[] ~kind:Procname.Java.Static ()
+          in
+          match get_summary enum_values_pname with
+          | Some enum_values_mem ->
+              let length =
+                let ret_loc = Loc.of_pvar (Pvar.get_ret_pvar enum_values_pname) in
+                let ret_v = Dom.Mem.find ret_loc enum_values_mem in
+                Dom.Mem.find_set (Dom.Val.get_all_locs ret_v) enum_values_mem
+                |> Dom.Val.array_sizeof
+              in
+              decl_array model_env ~ret length mem
+          | None ->
+              Logging.d_printfln_escaped "Summary of Enum.values not found" ;
+              mem )
+      | _ ->
+          Logging.d_printfln_escaped "Parameter is not a class name constant" ;
+          mem
+    in
+    {exec; check= no_check}
 end
 
 module JavaString = struct
@@ -1065,7 +1169,7 @@ module JavaString = struct
           ~represents_multiple_values:true
       in
       Dom.Mem.add_stack (Loc.of_id id) (Dom.Val.of_loc arr_loc) mem
-      |> Dom.Mem.add_heap (Loc.append_field arr_loc ~fn)
+      |> Dom.Mem.add_heap (Loc.append_field arr_loc fn)
            (Dom.Val.of_java_array_alloc elem_alloc ~length ~traces)
       |> Dom.Mem.add_heap (Loc.of_allocsite elem_alloc) elem
     in
@@ -1160,6 +1264,17 @@ module JavaString = struct
 
   let empty_constructor tgt_exp = copy_constructor tgt_exp (Exp.Const (Const.Cstr ""))
 
+  (* We model Enum.name or Class.getCanonicalName as returning an arbitrary constant name, rather
+     than getting real names.  We did this because we couldn't think of any big gains from getting
+     the real names in terms of analysis precision. *)
+  let inferbo_constant_string =
+    let constant_string_val =
+      Loc.of_allocsite (Allocsite.literal_string "__constant_string") |> Dom.Val.of_loc
+    in
+    let exec _model_env ~ret:(ret_id, _) mem = model_by_value constant_string_val ret_id mem in
+    {exec; check= no_check}
+
+
   let create_with_length {pname; node_hash; location; integer_type_widths} ~ret:(id, _) ~begin_idx
       ~end_v mem =
     let begin_itv = Sem.eval integer_type_widths begin_idx mem |> Dom.Val.get_itv in
@@ -1176,7 +1291,7 @@ module JavaString = struct
     in
     let traces = Trace.(Set.singleton location ArrayDeclaration) in
     Dom.Mem.add_stack (Loc.of_id id) (Dom.Val.of_loc arr_loc) mem
-    |> Dom.Mem.add_heap (Loc.append_field arr_loc ~fn)
+    |> Dom.Mem.add_heap (Loc.append_field arr_loc fn)
          (Dom.Val.of_java_array_alloc elem_alloc ~length:length_itv ~traces)
 
 
@@ -1201,7 +1316,9 @@ end
 
 module Preconditions = struct
   let check_argument exp =
-    let exec {integer_type_widths} ~ret:_ mem = Sem.Prune.prune integer_type_widths exp mem in
+    let exec {integer_type_widths; location} ~ret:_ mem =
+      Sem.Prune.prune location integer_type_widths exp mem
+    in
     {exec; check= no_check}
 end
 
@@ -1261,70 +1378,239 @@ module Object = struct
     {exec; check= no_check}
 end
 
+module InferAnnotation = struct
+  let assert_get index_exp coll_exp =
+    match coll_exp with
+    | Exp.Var coll_id ->
+        Collection.get_at_index coll_id index_exp
+    | _ ->
+        no_model
+end
+
 module Call = struct
   let dispatch : (Tenv.t, model, unit) ProcnameDispatcher.Call.dispatcher =
     let open ProcnameDispatcher.Call in
-    let mk_std_array () = -"std" &:: "array" < any_typ &+ capt_int in
-    let std_array0 = mk_std_array () in
-    let std_array1 = mk_std_array () in
-    let std_array2 = mk_std_array () in
     let int_typ = Typ.mk (Typ.Tint Typ.IInt) in
     let char_typ = Typ.mk (Typ.Tint Typ.IChar) in
     let char_ptr = Typ.mk (Typ.Tptr (char_typ, Pk_pointer)) in
     let char_array = Typ.mk (Typ.Tptr (Typ.mk_array char_typ, Pk_pointer)) in
     make_dispatcher
-      [ -"__exit" <>--> bottom
+      [ (* Clang common models *)
+        -"__cast" <>$ capt_exp $+ capt_exp $+...$--> cast
+      ; -"__exit" <>--> bottom
+      ; -"__get_array_length" <>$ capt_exp $!--> get_array_length
       ; -"__infer_objc_cpp_throw" <>--> bottom
-      ; -"CFArrayCreate" <>$ any_arg $+ capt_exp $+ capt_exp $+...$--> CFArray.create_array
-      ; -"CFArrayCreateCopy" <>$ any_arg $+ capt_exp $!--> create_copy_array
-      ; -"MCFArrayGetCount" <>$ capt_exp $!--> CFArray.length
-      ; -"CFDictionaryGetCount" <>$ capt_exp $!--> CFArray.length
-      ; -"CFArrayGetCount" <>$ capt_exp $!--> CFArray.length
-      ; -"CFArrayGetValueAtIndex" <>$ capt_arg $+ capt_arg $!--> CFArray.at
-      ; -"exit" <>--> bottom
-      ; -"__cast" <>$ capt_exp $+ capt_exp $+...$--> cast
-      ; -"fgetc" <>--> by_value Dom.Val.Itv.m1_255
-      ; -"fgets" <>$ capt_exp $+ capt_exp $+...$--> fgets
-      ; -"infer_print" <>$ capt_exp $!--> infer_print
-      ; -"malloc" <>$ capt_exp $+...$--> malloc ~can_be_zero:false
-      ; -"calloc" <>$ capt_exp $+ capt_exp $!--> calloc ~can_be_zero:false
-      ; -"__new"
-        <>$ any_arg_of_typ (+PatternMatch.implements_pseudo_collection)
-        $+...$--> Collection.new_collection
       ; -"__new"
         <>$ any_arg_of_typ (+PatternMatch.implements_collection)
         $+...$--> Collection.new_collection
       ; -"__new"
         <>$ any_arg_of_typ (+PatternMatch.implements_map)
         $+...$--> Collection.new_collection
-      ; +PatternMatch.implements_map &:: "size" <>$ capt_exp $!--> Collection.size
       ; -"__new"
         <>$ any_arg_of_typ (+PatternMatch.implements_org_json "JSONArray")
         $+...$--> Collection.new_collection
+      ; -"__new"
+        <>$ any_arg_of_typ (+PatternMatch.implements_pseudo_collection)
+        $+...$--> Collection.new_collection
       ; -"__new" <>$ capt_exp $+...$--> malloc ~can_be_zero:true
       ; -"__new_array" <>$ capt_exp $+...$--> malloc ~can_be_zero:true
-      ; +PatternMatch.implements_arrays &:: "asList" <>$ capt_exp $!--> create_copy_array
-      ; +PatternMatch.implements_collection &:: "toArray" <>$ capt_exp $+...$--> create_copy_array
-      ; +PatternMatch.implements_arrays &:: "copyOf" <>$ capt_exp $+ capt_exp
-        $+...$--> Collection.copyOf
       ; -"__placement_new" <>$ capt_exp $+ capt_arg $+? capt_arg $!--> placement_new
-      ; -"realloc" <>$ capt_exp $+ capt_exp $+...$--> realloc
-      ; -"__get_array_length" <>$ capt_exp $!--> get_array_length
       ; -"__set_array_length" <>$ capt_arg $+ capt_exp $!--> set_array_length
-      ; +PatternMatch.implements_lang "CharSequence"
-        &:: "length" <>$ capt_exp $!--> JavaString.length
-      ; -"strlen" <>$ capt_exp $!--> strlen
+      ; -"calloc" <>$ capt_exp $+ capt_exp $!--> calloc ~can_be_zero:false
+      ; -"exit" <>--> bottom
+      ; -"fgetc" <>--> by_value Dom.Val.Itv.m1_255
+      ; -"fgets" <>$ capt_exp $+ capt_exp $+...$--> fgets
+      ; -"infer_print" <>$ capt_exp $!--> infer_print
+      ; -"malloc" <>$ capt_exp $+...$--> malloc ~can_be_zero:false
       ; -"memcpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memmove" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> memcpy
       ; -"memset" <>$ capt_exp $+ any_arg $+ capt_exp $!--> memset
+      ; -"realloc" <>$ capt_exp $+ capt_exp $+...$--> realloc
+      ; -"snprintf" <>--> snprintf
       ; -"strcat" <>$ capt_exp $+ capt_exp $+...$--> strcat
+      ; -"strcpy" <>$ capt_exp $+ capt_exp $+...$--> strcpy
+      ; -"strlen" <>$ capt_exp $!--> strlen
+      ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> strncpy
+      ; -"strndup" <>$ capt_exp $+ capt_exp $+...$--> strndup
+      ; -"vsnprintf" <>--> vsnprintf
+      ; (* ObjC models *)
+        -"CFArrayCreate" <>$ any_arg $+ capt_exp $+ capt_exp $+...$--> CFArray.create_array
+      ; -"CFArrayCreateCopy" <>$ any_arg $+ capt_exp $!--> create_copy_array
+      ; -"CFArrayGetCount" <>$ capt_exp $!--> CFArray.length
+      ; -"CFArrayGetValueAtIndex" <>$ capt_arg $+ capt_arg $!--> CFArray.at
+      ; -"CFDictionaryGetCount" <>$ capt_exp $!--> CFArray.length
+      ; -"MCFArrayGetCount" <>$ capt_exp $!--> CFArray.length
+      ; (* C++ models *)
+        -"boost" &:: "split"
+        $ capt_arg_of_typ (-"std" &:: "vector")
+        $+ any_arg $+ any_arg $+? any_arg $--> Boost.Split.std_vector
+      ; -"folly" &:: "split" $ any_arg $+ any_arg
+        $+ capt_arg_of_typ (-"std" &:: "vector")
+        $+? capt_exp $--> Folly.Split.std_vector
+      ; -"std" &:: "__shared_ptr_access" &:: "operator->" $ capt_exp $--> id
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "array" &--> StdArray.constructor
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "at" $ capt_arg $+ capt_arg $!--> StdArray.at
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "back" $ capt_arg $!--> StdArray.back
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "begin" $ capt_arg $!--> StdArray.begin_
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "cbegin" $ capt_arg $!--> StdArray.begin_
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "cend" $ capt_arg $!--> StdArray.end_
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "end" $ capt_arg $!--> StdArray.end_
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "front" $ capt_arg $!--> StdArray.begin_
+      ; -"std" &:: "array" < any_typ &+ capt_int >:: "operator[]" $ capt_arg $+ capt_arg
+        $!--> StdArray.at
+      ; -"std" &:: "array" &::.*--> no_model
+      ; -"std" &:: "basic_string" &:: "compare" &--> by_value Dom.Val.Itv.top
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
+        $+ capt_exp_of_prim_typ char_ptr
+        $+ capt_exp_of_prim_typ (Typ.mk (Typ.Tint Typ.size_t))
+        $--> StdBasicString.constructor_from_char_ptr_with_len
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
+        $+ capt_exp_of_prim_typ char_ptr $--> StdBasicString.constructor_from_char_ptr_without_len
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
+        $+ capt_exp_of_typ (-"std" &:: "basic_string")
+        $--> StdBasicString.copy_constructor
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "empty" $ capt_arg $--> StdBasicString.empty
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "length" $ capt_arg $--> StdBasicString.length
+      ; -"std" &:: "basic_string" < capt_typ &+...>:: "size" $ capt_arg $--> StdBasicString.length
+      ; -"std" &:: "basic_string" &::.*--> no_model
+      ; -"std" &:: "operator!=" $ any_arg_of_prim_typ char_ptr
+        $+ any_arg_of_typ (-"std" &:: "basic_string")
+        $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "operator!="
+        $ any_arg_of_typ (-"std" &:: "basic_string")
+        $+ any_arg_of_prim_typ char_ptr $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "operator!="
+        $ any_arg_of_typ (-"std" &:: "basic_string")
+        $+ any_arg_of_typ (-"std" &:: "basic_string")
+        $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "operator==" $ any_arg_of_prim_typ char_ptr
+        $+ any_arg_of_typ (-"std" &:: "basic_string")
+        $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "operator=="
+        $ any_arg_of_typ (-"std" &:: "basic_string")
+        $+ any_arg_of_prim_typ char_ptr $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "operator=="
+        $ any_arg_of_typ (-"std" &:: "basic_string")
+        $+ any_arg_of_typ (-"std" &:: "basic_string")
+        $--> by_value Dom.Val.Itv.unknown_bool
+      ; -"std" &:: "shared_ptr" &:: "operator->" $ capt_exp $--> id
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "data" $ capt_arg $--> StdVector.data
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "emplace_back" $ capt_arg $+ capt_exp
+        $--> StdVector.push_back
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "empty" $ capt_arg $--> StdVector.empty
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "operator[]"
+        $ capt_arg_of_typ (-"std" &:: "vector")
+        $+ capt_exp $--> StdVector.at
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "push_back" $ capt_arg $+ capt_exp
+        $--> StdVector.push_back
+      ; -"std" &:: "vector" < any_typ &+ any_typ >:: "reserve" $ any_arg $+ any_arg $--> no_model
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "resize" $ capt_arg $+ capt_exp
+        $--> StdVector.resize
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "size" $ capt_arg $--> StdVector.size
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
+        $ capt_arg_of_typ (-"std" &:: "vector")
+        $+ capt_exp_of_prim_typ (Typ.mk (Typ.Tint Typ.size_t))
+        $+? any_arg $--> StdVector.constructor_size
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
+        $ capt_arg_of_typ (-"std" &:: "vector")
+        $+ capt_exp_of_typ (-"std" &:: "vector")
+        $+? any_arg $--> StdVector.constructor_copy
+      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
+        $ capt_arg_of_typ (-"std" &:: "vector")
+        $--> StdVector.constructor_empty
+      ; (* Java models *)
+        -"java.lang.Object" &:: "clone" <>$ capt_exp $--> Object.clone
+      ; +PatternMatch.implements_arrays &:: "asList" <>$ capt_exp $!--> create_copy_array
+      ; +PatternMatch.implements_arrays &:: "copyOf" <>$ capt_exp $+ capt_exp
+        $+...$--> Collection.copyOf
+      ; (* model sets and maps as lists *)
+        +PatternMatch.implements_collection
+        &:: "<init>" <>$ capt_var_exn
+        $+ capt_exp_of_typ (+PatternMatch.implements_collection)
+        $--> Collection.init_with_arg
+      ; +PatternMatch.implements_collection
+        &:: "<init>" <>$ any_arg $+ capt_exp $--> Collection.init_with_capacity
+      ; +PatternMatch.implements_collection
+        &:: "add" <>$ capt_var_exn $+ capt_exp $+ any_arg $--> Collection.add_at_index
+      ; +PatternMatch.implements_collection
+        &:: "add" <>$ capt_var_exn $+ capt_exp $--> Collection.add
+      ; +PatternMatch.implements_collection
+        &:: "addAll" <>$ capt_var_exn $+ capt_exp $+ capt_exp $--> Collection.addAll_at_index
+      ; +PatternMatch.implements_collection
+        &:: "addAll" <>$ capt_var_exn $+ capt_exp $--> Collection.addAll
+      ; +PatternMatch.implements_collection
+        &:: "get" <>$ capt_var_exn $+ capt_exp $--> Collection.get_at_index
+      ; +PatternMatch.implements_collection
+        &:: "remove" <>$ capt_var_exn $+ capt_exp $--> Collection.remove_at_index
+      ; +PatternMatch.implements_collection
+        &:: "set" <>$ capt_var_exn $+ capt_exp $+ capt_exp $--> Collection.set_at_index
+      ; +PatternMatch.implements_collection &:: "size" <>$ capt_exp $!--> Collection.size
+      ; +PatternMatch.implements_collection &:: "toArray" <>$ capt_exp $+...$--> create_copy_array
+      ; +PatternMatch.implements_collections &:: "emptyList" <>--> Collection.new_collection
+      ; +PatternMatch.implements_collections &:: "emptyMap" <>--> Collection.new_collection
+      ; +PatternMatch.implements_collections &:: "emptySet" <>--> Collection.new_collection
+      ; +PatternMatch.implements_collections &:: "singleton" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonList" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonList" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonMap" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections
+        &:: "singletonMap" <>--> Collection.singleton_collection
+      ; +PatternMatch.implements_collections &::+ unmodifiable <>$ capt_exp $--> Collection.iterator
+      ; +PatternMatch.implements_google "common.base.Preconditions"
+        &:: "checkArgument" <>$ capt_exp $+...$--> Preconditions.check_argument
+      ; +PatternMatch.implements_google "common.base.Preconditions"
+        &:: "checkNotNull" <>$ capt_exp $+...$--> id
+      ; +PatternMatch.implements_google "common.base.Preconditions"
+        &:: "checkState" <>$ capt_exp $+...$--> Preconditions.check_argument
+      ; +PatternMatch.implements_infer_annotation "Assertions"
+        &:: "assertGet" <>$ capt_exp $+ capt_exp $--> InferAnnotation.assert_get
+      ; +PatternMatch.implements_infer_annotation "Assertions"
+        &:: "assertNotNull" <>$ capt_exp $+...$--> id
+      ; +PatternMatch.implements_infer_annotation "Assertions"
+        &:: "assumeNotNull" <>$ capt_exp $+...$--> id
+      ; +PatternMatch.implements_infer_annotation "Assertions"
+        &:: "nullsafeFIXME" <>$ capt_exp $+...$--> id
+      ; +PatternMatch.implements_infer_annotation "Assertions" &::.*--> no_model
+      ; +PatternMatch.implements_io "InputStream"
+        &:: "read" <>$ any_arg $+ any_arg $+ any_arg $+ capt_exp $--> InputStream.read
+      ; +PatternMatch.implements_iterator &:: "hasNext" <>$ capt_exp $!--> Collection.hasNext
+      ; +PatternMatch.implements_iterator &:: "next" <>$ capt_exp $!--> Collection.next
       ; +PatternMatch.implements_lang "CharSequence"
-        &:: "charAt" <>$ capt_exp $+ capt_exp $--> JavaString.charAt
+        &:: "<init>" <>$ capt_exp $+ capt_exp $--> JavaString.copy_constructor
       ; +PatternMatch.implements_lang "CharSequence"
         &:: "<init>" <>$ capt_exp $+ capt_exp_of_prim_typ char_array
         $--> JavaString.constructor_from_array
       ; +PatternMatch.implements_lang "CharSequence"
-        &:: "<init>" <>$ capt_exp $+ capt_exp $--> JavaString.copy_constructor
+        &:: "charAt" <>$ capt_exp $+ capt_exp $--> JavaString.charAt
+      ; +PatternMatch.implements_lang "CharSequence"
+        &:: "equals"
+        $ any_arg_of_typ (+PatternMatch.implements_lang "CharSequence")
+        $+ any_arg_of_typ (+PatternMatch.implements_lang "CharSequence")
+        $--> by_value Dom.Val.Itv.unknown_bool
+      ; +PatternMatch.implements_lang "CharSequence"
+        &:: "length" <>$ capt_exp $!--> JavaString.length
+      ; +PatternMatch.implements_lang "CharSequence"
+        &:: "substring" <>$ any_arg $+ capt_exp $+ capt_exp $--> JavaString.substring
+      ; +PatternMatch.implements_lang "Class"
+        &:: "getCanonicalName" &::.*--> JavaString.inferbo_constant_string
+      ; +PatternMatch.implements_lang "Class"
+        &:: "getEnumConstants" <>$ capt_exp $--> JavaClass.get_enum_constants
+      ; +PatternMatch.implements_lang "Class" &:: "getFields" <>$ capt_exp $--> JavaClass.get_fields
+      ; +PatternMatch.implements_lang "Enum" &:: "name" &::.*--> JavaString.inferbo_constant_string
+      ; +PatternMatch.implements_lang "Integer"
+        &:: "intValue" <>$ capt_exp $--> JavaInteger.intValue
+      ; +PatternMatch.implements_lang "Integer" &:: "valueOf" <>$ capt_exp $--> JavaInteger.valueOf
+      ; +PatternMatch.implements_lang "Iterable"
+        &:: "iterator" <>$ capt_exp $!--> Collection.iterator
+      ; +PatternMatch.implements_lang "Math"
+        &:: "max" <>$ capt_exp $+ capt_exp
+        $--> eval_binop ~f:(Itv.max_sem ~use_minmax_bound:true)
+      ; +PatternMatch.implements_lang "Math"
+        &:: "min" <>$ capt_exp $+ capt_exp
+        $--> eval_binop ~f:(Itv.min_sem ~use_minmax_bound:true)
       ; +PatternMatch.implements_lang "String"
         &:: "<init>" <>$ capt_exp $--> JavaString.empty_constructor
       ; +PatternMatch.implements_lang "String"
@@ -1341,187 +1627,42 @@ module Call = struct
       ; +PatternMatch.implements_lang "String"
         &:: "split" <>$ capt_exp $+ any_arg $--> JavaString.split
       ; +PatternMatch.implements_lang "String"
-        &:: "substring" <>$ capt_exp $+ capt_exp $--> JavaString.substring_no_end
-      ; +PatternMatch.implements_lang "CharSequence"
-        &:: "substring" <>$ any_arg $+ capt_exp $+ capt_exp $--> JavaString.substring
-      ; +PatternMatch.implements_lang "StringBuilder"
-        &:: "append" <>$ capt_exp $+ capt_exp $+...$--> JavaString.concat
-      ; +PatternMatch.implements_lang "StringBuilder" &:: "toString" <>$ capt_exp $+...$--> id
-      ; -"strcpy" <>$ capt_exp $+ capt_exp $+...$--> strcpy
-      ; -"strncpy" <>$ capt_exp $+ capt_exp $+ capt_exp $+...$--> strncpy
-      ; -"snprintf" <>--> snprintf
-      ; -"vsnprintf" <>--> vsnprintf
-      ; -"strndup" <>$ capt_exp $+ capt_exp $+...$--> strndup
-      ; -"boost" &:: "split"
-        $ capt_arg_of_typ (-"std" &:: "vector")
-        $+ any_arg $+ any_arg $+? any_arg $--> Boost.Split.std_vector
-      ; -"folly" &:: "split" $ any_arg $+ any_arg
-        $+ capt_arg_of_typ (-"std" &:: "vector")
-        $+? capt_exp $--> Folly.Split.std_vector
-      ; std_array0 >:: "array" &--> StdArray.constructor
-      ; std_array1 >:: "begin" $ capt_arg $!--> StdArray.begin_
-      ; std_array1 >:: "cbegin" $ capt_arg $!--> StdArray.begin_
-      ; std_array1 >:: "end" $ capt_arg $!--> StdArray.end_
-      ; std_array1 >:: "cend" $ capt_arg $!--> StdArray.end_
-      ; std_array1 >:: "front" $ capt_arg $!--> StdArray.begin_
-      ; std_array1 >:: "back" $ capt_arg $!--> StdArray.back
-      ; std_array2 >:: "at" $ capt_arg $+ capt_arg $!--> StdArray.at
-      ; std_array2 >:: "operator[]" $ capt_arg $+ capt_arg $!--> StdArray.at
-      ; -"std" &:: "array" &::.*--> no_model
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
-        $+ capt_exp_of_typ (-"std" &:: "basic_string")
-        $--> StdBasicString.copy_constructor
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
-        $+ capt_exp_of_prim_typ char_ptr $--> StdBasicString.constructor_from_char_ptr_without_len
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "basic_string" $ capt_arg
-        $+ capt_exp_of_prim_typ char_ptr
-        $+ capt_exp_of_prim_typ (Typ.mk (Typ.Tint Typ.size_t))
-        $--> StdBasicString.constructor_from_char_ptr_with_len
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "empty" $ capt_arg $--> StdBasicString.empty
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "length" $ capt_arg $--> StdBasicString.length
-      ; -"std" &:: "basic_string" < capt_typ &+...>:: "size" $ capt_arg $--> StdBasicString.length
-      ; -"std" &:: "basic_string" &:: "compare" &--> by_value Dom.Val.Itv.top
-      ; +PatternMatch.implements_lang "CharSequence"
-        &:: "equals"
-        $ any_arg_of_typ (+PatternMatch.implements_lang "CharSequence")
-        $+ any_arg_of_typ (+PatternMatch.implements_lang "CharSequence")
-        $--> by_value Dom.Val.Itv.unknown_bool
-      ; +PatternMatch.implements_lang "String"
         &:: "startsWith"
         $ any_arg_of_typ (+PatternMatch.implements_lang "String")
         $+ any_arg_of_typ (+PatternMatch.implements_lang "String")
         $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator=="
-        $ any_arg_of_typ (-"std" &:: "basic_string")
-        $+ any_arg_of_typ (-"std" &:: "basic_string")
-        $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator=="
-        $ any_arg_of_typ (-"std" &:: "basic_string")
-        $+ any_arg_of_prim_typ char_ptr $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator==" $ any_arg_of_prim_typ char_ptr
-        $+ any_arg_of_typ (-"std" &:: "basic_string")
-        $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator!="
-        $ any_arg_of_typ (-"std" &:: "basic_string")
-        $+ any_arg_of_typ (-"std" &:: "basic_string")
-        $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator!="
-        $ any_arg_of_typ (-"std" &:: "basic_string")
-        $+ any_arg_of_prim_typ char_ptr $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "operator!=" $ any_arg_of_prim_typ char_ptr
-        $+ any_arg_of_typ (-"std" &:: "basic_string")
-        $--> by_value Dom.Val.Itv.unknown_bool
-      ; -"std" &:: "basic_string" &::.*--> no_model
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
-        $ capt_arg_of_typ (-"std" &:: "vector")
-        $--> StdVector.constructor_empty
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
-        $ capt_arg_of_typ (-"std" &:: "vector")
-        $+ capt_exp_of_prim_typ (Typ.mk (Typ.Tint Typ.size_t))
-        $+? any_arg $--> StdVector.constructor_size
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "vector"
-        $ capt_arg_of_typ (-"std" &:: "vector")
-        $+ capt_exp_of_typ (-"std" &:: "vector")
-        $+? any_arg $--> StdVector.constructor_copy
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "operator[]"
-        $ capt_arg_of_typ (-"std" &:: "vector")
-        $+ capt_exp $--> StdVector.at
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "empty" $ capt_arg $--> StdVector.empty
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "data" $ capt_arg $--> StdVector.data
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "push_back" $ capt_arg $+ capt_exp
-        $--> StdVector.push_back
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "emplace_back" $ capt_arg $+ capt_exp
-        $--> StdVector.push_back
-      ; -"std" &:: "vector" < any_typ &+ any_typ >:: "reserve" $ any_arg $+ any_arg $--> no_model
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "size" $ capt_arg $--> StdVector.size
-      ; -"std" &:: "vector" < capt_typ &+ any_typ >:: "resize" $ capt_arg $+ capt_exp
-        $--> StdVector.resize
-      ; -"std" &:: "shared_ptr" &:: "operator->" $ capt_exp $--> id
-      ; -"std" &:: "__shared_ptr_access" &:: "operator->" $ capt_exp $--> id
-      ; +PatternMatch.implements_collection
+      ; +PatternMatch.implements_lang "String"
+        &:: "substring" <>$ capt_exp $+ capt_exp $--> JavaString.substring_no_end
+      ; +PatternMatch.implements_lang "StringBuilder"
+        &:: "append" <>$ capt_exp $+ capt_exp $+...$--> JavaString.concat
+      ; +PatternMatch.implements_lang "StringBuilder" &:: "toString" <>$ capt_exp $+...$--> id
+      ; +PatternMatch.implements_list &:: "listIterator" <>$ capt_exp $+...$--> Collection.iterator
+      ; +PatternMatch.implements_list &:: "subList" <>$ any_arg $+ capt_exp $+ capt_exp
+        $--> Collection.subList
+      ; +PatternMatch.implements_map &:: "entrySet" <>$ capt_exp $!--> Collection.iterator
+      ; +PatternMatch.implements_map &:: "keySet" <>$ capt_exp $!--> Collection.iterator
+      ; +PatternMatch.implements_map &:: "put" <>$ capt_var_exn $+ any_arg $+ capt_exp
+        $--> Collection.put_with_elem
+      ; +PatternMatch.implements_map &:: "putAll" <>$ capt_var_exn $+ capt_exp
+        $--> Collection.putAll
+      ; +PatternMatch.implements_map &:: "size" <>$ capt_exp $!--> Collection.size
+      ; +PatternMatch.implements_map &:: "values" <>$ capt_exp $!--> Collection.iterator
+      ; +PatternMatch.implements_nio "ByteBuffer" &:: "get" <>$ capt_exp $--> ByteBuffer.get_int
+      ; +PatternMatch.implements_nio "ByteBuffer" &:: "getInt" <>$ capt_exp $--> ByteBuffer.get_int
+      ; +PatternMatch.implements_nio "ByteBuffer" &:: "getLong" <>$ capt_exp $--> ByteBuffer.get_int
+      ; +PatternMatch.implements_nio "ByteBuffer"
+        &:: "getShort" <>$ capt_exp $--> ByteBuffer.get_int
+      ; +PatternMatch.implements_nio "channels.FileChannel"
+        &:: "read" <>$ any_arg $+ capt_exp $+ any_arg $--> FileChannel.read
+      ; +PatternMatch.implements_org_json "JSONArray"
         &:: "<init>" <>$ capt_var_exn
         $+ capt_exp_of_typ (+PatternMatch.implements_collection)
         $--> Collection.init_with_arg
-      ; +PatternMatch.implements_collection
-        &:: "<init>" <>$ any_arg $+ capt_exp $--> Collection.init_with_capacity
-        (* model sets as lists *)
-      ; +PatternMatch.implements_collections &::+ unmodifiable <>$ capt_exp $--> Collection.iterator
-      ; +PatternMatch.implements_collections &:: "singleton" <>--> Collection.singleton_collection
-      ; +PatternMatch.implements_collections
-        &:: "singletonList" <>--> Collection.singleton_collection
-      ; +PatternMatch.implements_collections
-        &:: "singletonMap" <>--> Collection.singleton_collection
-      ; +PatternMatch.implements_collections &:: "emptyList" <>--> Collection.new_collection
-      ; +PatternMatch.implements_collections &:: "emptySet" <>--> Collection.new_collection
-      ; +PatternMatch.implements_collections &:: "emptyMap" <>--> Collection.new_collection
-        (* model maps as lists *)
-      ; +PatternMatch.implements_collections
-        &:: "singletonMap" <>--> Collection.singleton_collection
-      ; +PatternMatch.implements_collections
-        &:: "singletonList" <>--> Collection.singleton_collection
-      ; +PatternMatch.implements_collection
-        &:: "get" <>$ capt_var_exn $+ capt_exp $--> Collection.get_or_set_at_index
-      ; +PatternMatch.implements_collection
-        &:: "set" <>$ capt_var_exn $+ capt_exp $+ any_arg $--> Collection.get_or_set_at_index
-      ; +PatternMatch.implements_collection
-        &:: "remove" <>$ capt_var_exn $+ capt_exp $--> Collection.remove_at_index
-      ; +PatternMatch.implements_collection
-        &:: "add" <>$ capt_var_exn $+ any_arg $--> Collection.add
-      ; +PatternMatch.implements_pseudo_collection
-        &:: "put" <>$ capt_var_exn $+ any_arg $+ any_arg $--> Collection.put
-      ; +PatternMatch.implements_collection
-        &:: "add" <>$ capt_var_exn $+ capt_exp $+ any_arg $!--> Collection.add_at_index
-      ; +PatternMatch.implements_lang "Iterable"
-        &:: "iterator" <>$ capt_exp $!--> Collection.iterator
-      ; +PatternMatch.implements_list &:: "listIterator" <>$ capt_exp $+...$--> Collection.iterator
-      ; +PatternMatch.implements_map &:: "entrySet" <>$ capt_exp $!--> Collection.iterator
-      ; +PatternMatch.implements_map &:: "keySet" <>$ capt_exp $!--> Collection.iterator
-      ; +PatternMatch.implements_map &:: "values" <>$ capt_exp $!--> Collection.iterator
-      ; +PatternMatch.implements_map &:: "put" <>$ capt_var_exn $+ any_arg $+ any_arg
-        $--> Collection.put
-      ; +PatternMatch.implements_org_json "JSONArray"
-        &:: "put" <>$ capt_var_exn $+...$--> Collection.put
-      ; +PatternMatch.implements_map &:: "putAll" <>$ capt_var_exn $+ capt_exp
-        $--> Collection.putAll
-      ; +PatternMatch.implements_iterator &:: "hasNext" <>$ capt_exp $!--> Collection.hasNext
-      ; +PatternMatch.implements_iterator &:: "next" <>$ capt_exp $!--> Collection.next
-      ; +PatternMatch.implements_list &:: "subList" <>$ any_arg $+ capt_exp $+ capt_exp
-        $--> Collection.subList
-      ; +PatternMatch.implements_collection
-        &:: "addAll" <>$ capt_var_exn $+ capt_exp $--> Collection.addAll
-      ; +PatternMatch.implements_collection
-        &:: "addAll" <>$ capt_var_exn $+ capt_exp $+ capt_exp $!--> Collection.addAll_at_index
-      ; +PatternMatch.implements_collection &:: "size" <>$ capt_exp $!--> Collection.size
-      ; +PatternMatch.implements_google "common.base.Preconditions"
-        &:: "checkArgument" <>$ capt_exp $+...$--> Preconditions.check_argument
-      ; +PatternMatch.implements_google "common.base.Preconditions"
-        &:: "checkState" <>$ capt_exp $+...$--> Preconditions.check_argument
-      ; +PatternMatch.implements_google "common.base.Preconditions"
-        &:: "checkNotNull" <>$ capt_exp $+...$--> id
-      ; +PatternMatch.implements_pseudo_collection &:: "size" <>$ capt_exp $!--> Collection.size
       ; +PatternMatch.implements_org_json "JSONArray"
         &:: "length" <>$ capt_exp $!--> Collection.size
       ; +PatternMatch.implements_org_json "JSONArray"
-        &:: "<init>" <>$ capt_var_exn
-        $+ capt_exp_of_typ (+PatternMatch.implements_collection)
-        $--> Collection.init_with_arg
-      ; +PatternMatch.implements_lang "Integer"
-        &:: "intValue" <>$ capt_exp $--> JavaInteger.intValue
-      ; +PatternMatch.implements_lang "Integer" &:: "valueOf" <>$ capt_exp $--> JavaInteger.valueOf
-      ; +PatternMatch.implements_io "InputStream"
-        &:: "read" <>$ any_arg $+ any_arg $+ any_arg $+ capt_exp $--> InputStream.read
-      ; +PatternMatch.implements_nio "channels.FileChannel"
-        &:: "read" <>$ any_arg $+ capt_exp $+ any_arg $--> FileChannel.read
-      ; +PatternMatch.implements_nio "ByteBuffer" &:: "get" <>$ capt_exp $--> ByteBuffer.get_int
-      ; +PatternMatch.implements_nio "ByteBuffer"
-        &:: "getShort" <>$ capt_exp $--> ByteBuffer.get_int
-      ; +PatternMatch.implements_nio "ByteBuffer" &:: "getInt" <>$ capt_exp $--> ByteBuffer.get_int
-      ; +PatternMatch.implements_nio "ByteBuffer" &:: "getLong" <>$ capt_exp $--> ByteBuffer.get_int
-      ; -"java.lang.Object" &:: "clone" <>$ capt_exp $--> Object.clone
-      ; +PatternMatch.implements_lang "Math"
-        &:: "max" <>$ capt_exp $+ capt_exp
-        $--> eval_binop ~f:(Itv.max_sem ~use_minmax_bound:true)
-      ; +PatternMatch.implements_lang "Math"
-        &:: "min" <>$ capt_exp $+ capt_exp
-        $--> eval_binop ~f:(Itv.min_sem ~use_minmax_bound:true) ]
+        &:: "put" <>$ capt_var_exn $+...$--> Collection.put
+      ; +PatternMatch.implements_pseudo_collection
+        &:: "put" <>$ capt_var_exn $+ any_arg $+ any_arg $--> Collection.put
+      ; +PatternMatch.implements_pseudo_collection &:: "size" <>$ capt_exp $!--> Collection.size ]
 end

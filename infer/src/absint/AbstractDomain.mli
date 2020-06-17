@@ -7,6 +7,8 @@
 
 open! IStd
 
+(** {1 Abstract domains and domain combinators} *)
+
 module Types : sig
   type 'astate bottom_lifted = Bottom | NonBottom of 'astate
 
@@ -16,12 +18,6 @@ module Types : sig
 end
 
 open! Types
-
-exception Stop_analysis
-(** This exception can be raised by abstract interpreters to stop the analysis early without
-    triggering further errors. Clients who raise this exception should catch it eventually. *)
-
-(** Abstract domains and domain combinators *)
 
 module type NoJoin = sig
   include PrettyPrintable.PrintableType
@@ -42,8 +38,8 @@ include (* ocaml ignores the warning suppression at toplevel, hence the [include
   sig
   [@@@warning "-60"]
 
-  module Empty : S with type t = unit
   (** a trivial domain *)
+  module Empty : S with type t = unit
 end
 
 (** A domain with an explicit bottom value *)
@@ -81,6 +77,10 @@ end
 module TopLifted (Domain : S) : WithTop with type t = Domain.t top_lifted
 
 module TopLiftedUtils : sig
+  val leq : leq:(lhs:'a -> rhs:'a -> bool) -> lhs:'a top_lifted -> rhs:'a top_lifted -> bool
+
+  val pp : pp:(Format.formatter -> 'a -> unit) -> Format.formatter -> 'a top_lifted -> unit
+
   val pp_top : Format.formatter -> unit
 end
 
@@ -257,13 +257,13 @@ include sig
   end
 end
 
-module BooleanAnd : S with type t = bool
 (** Boolean domain ordered by p || ~q. Useful when you want a boolean that's true only when it's
     true in both conditional branches. *)
+module BooleanAnd : S with type t = bool
 
-module BooleanOr : WithBottom with type t = bool
 (** Boolean domain ordered by ~p || q. Useful when you want a boolean that's true only when it's
     true in one conditional branch. *)
+module BooleanOr : WithBottom with type t = bool
 
 module type MaxCount = sig
   val max : int
@@ -275,8 +275,8 @@ end
 module CountDomain (MaxCount : MaxCount) : sig
   include WithBottom with type t = private int
 
-  include WithTop with type t := t
   (** top is maximum value *)
+  include WithTop with type t := t
 
   val increment : t -> t
   (** bump the count by one if it is less than the max *)
@@ -291,11 +291,11 @@ end
 (** Domain keeping a non-negative count with a bounded maximum value. [join] is minimum and [top] is
     zero. *)
 module DownwardIntDomain (MaxCount : MaxCount) : sig
-  include WithTop with type t = private int
   (** top is zero *)
+  include WithTop with type t = private int
 
-  include WithBottom with type t := t
   (** bottom is the provided maximum *)
+  include WithBottom with type t := t
 
   val increment : t -> t
   (** bump the count by one if this won't cross the maximum *)

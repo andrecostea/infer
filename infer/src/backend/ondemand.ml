@@ -81,10 +81,6 @@ let get_proc_attr proc_name =
 
 let procedure_should_be_analyzed proc_name =
   match get_proc_attr proc_name with
-  | Some proc_attributes when Config.reactive_capture && not proc_attributes.is_defined ->
-      (* try to capture procedure first *)
-      let defined_proc_attributes = OndemandCapture.try_capture proc_attributes in
-      Option.value_map ~f:should_be_analyzed ~default:false defined_proc_attributes
   | Some proc_attributes ->
       should_be_analyzed proc_attributes
   | None ->
@@ -100,8 +96,9 @@ type global_state =
   ; name_generator: Ident.NameGenerator.t
   ; proc_analysis_time: (Mtime.Span.t * string) option
         (** the time elapsed doing [status] so far *)
-  ; pulse_address_generator: PulseAbstractValue.state
-  ; symexec_state: State.t }
+  ; pulse_address_generator: PulseAbstractValue.State.t
+  ; absint_state: AnalysisState.t
+  ; biabduction_state: State.t }
 
 let save_global_state () =
   Timeout.suspend_existing_timeout ~keep_symop_total:false ;
@@ -115,8 +112,9 @@ let save_global_state () =
   ; proc_analysis_time=
       Option.map !current_taskbar_status ~f:(fun (t0, status) ->
           (Mtime.span t0 (Mtime_clock.now ()), status) )
-  ; pulse_address_generator= PulseAbstractValue.get_state ()
-  ; symexec_state= State.save_state () }
+  ; pulse_address_generator= PulseAbstractValue.State.get ()
+  ; absint_state= AnalysisState.save ()
+  ; biabduction_state= State.save_state () }
 
 
 let restore_global_state st =
@@ -126,8 +124,9 @@ let restore_global_state st =
   BiabductionConfig.footprint := st.footprint_mode ;
   Printer.curr_html_formatter := st.html_formatter ;
   Ident.NameGenerator.set_current st.name_generator ;
-  PulseAbstractValue.set_state st.pulse_address_generator ;
-  State.restore_state st.symexec_state ;
+  PulseAbstractValue.State.set st.pulse_address_generator ;
+  AnalysisState.restore st.absint_state ;
+  State.restore_state st.biabduction_state ;
   current_taskbar_status :=
     Option.map st.proc_analysis_time ~f:(fun (suspended_span, status) ->
         (* forget about the time spent doing a nested analysis and resend the status of the outer
@@ -158,9 +157,7 @@ let analyze callee_summary =
   in
   current_taskbar_status := Some (t0, status) ;
   !ProcessPoolState.update_status t0 status ;
-  let summary = Callbacks.iterate_procedure_callbacks exe_env callee_summary in
-  if Topl.is_active () then Topl.add_errors exe_env summary ;
-  summary
+  Callbacks.iterate_procedure_callbacks exe_env callee_summary
 
 
 let run_proc_analysis ~caller_pdesc callee_pdesc =
@@ -182,7 +179,8 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     if Config.debug_mode then
       DotCfg.emit_proc_desc (Procdesc.get_attributes callee_pdesc).translation_unit callee_pdesc ;
     let initial_callee_summary = Summary.OnDisk.reset callee_pdesc in
-    add_active callee_pname ; initial_callee_summary
+    add_active callee_pname ;
+    initial_callee_summary
   in
   let postprocess summary =
     decr nesting ;
@@ -193,7 +191,8 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     summary
   in
   let log_error_and_continue exn (summary : Summary.t) kind =
-    Reporting.log_error_using_state summary exn ;
+    BiabductionReporting.log_issue_using_state (Summary.get_proc_desc summary)
+      (Summary.get_err_log summary) exn ;
     let stats = Summary.Stats.update summary.stats ~failure_kind:kind in
     let payloads =
       let biabduction =
@@ -224,8 +223,10 @@ let run_proc_analysis ~caller_pdesc callee_pdesc =
     let backtrace = Printexc.get_backtrace () in
     IExn.reraise_if exn ~f:(fun () ->
         match exn with
-        | RestartScheduler.ProcnameAlreadyLocked _ ->
-            clear_actives () ; restore_global_state old_state ; true
+        | TaskSchedulerTypes.ProcnameAlreadyLocked _ ->
+            clear_actives () ;
+            restore_global_state old_state ;
+            true
         | _ ->
             if not !logged_error then (
               let source_file = attributes.ProcAttributes.translation_unit in
@@ -280,8 +281,8 @@ let dump_duplicate_procs source_file procs =
             None )
   in
   let output_to_file duplicate_procs =
-    Out_channel.with_file (Config.results_dir ^/ Config.duplicates_filename)
-      ~append:true ~perm:0o666 ~f:(fun outc ->
+    Out_channel.with_file (ResultsDir.get_path DuplicateFunctions) ~append:true ~perm:0o666
+      ~f:(fun outc ->
         let fmt = F.formatter_of_out_channel outc in
         List.iter duplicate_procs ~f:(fun (pname, source_captured) ->
             F.fprintf fmt "DUPLICATE_SYMBOLS source:%a source_captured:%a pname:%a@\n" SourceFile.pp

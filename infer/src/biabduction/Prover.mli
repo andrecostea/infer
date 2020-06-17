@@ -59,7 +59,11 @@ val get_bounds : Tenv.t -> Prop.normal Prop.t -> Exp.t -> IntLit.t option * IntL
 
 (** {2 Abduction prover} *)
 
-val check_implication : Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> bool
+val check_implication :
+     BiabductionSummary.t InterproceduralAnalysis.t
+  -> Prop.normal Prop.t
+  -> Prop.exposed Prop.t
+  -> bool
 (** [check_implication p1 p2] returns true if [p1|-p2] *)
 
 type check = Bounds_check | Class_cast_check of Exp.t * Exp.t * Exp.t
@@ -81,7 +85,10 @@ type implication_result =
   | ImplFail of check list
 
 val check_implication_for_footprint :
-  Procname.t -> Tenv.t -> Prop.normal Prop.t -> Prop.exposed Prop.t -> implication_result
+     BiabductionSummary.t InterproceduralAnalysis.t
+  -> Prop.normal Prop.t
+  -> Prop.exposed Prop.t
+  -> implication_result
 (** [check_implication_for_footprint p1 p2] returns [Some(sub, frame, missing)] if
     [sub(p1 * missing) |- sub(p2 * frame)] where [sub] is a substitution which instantiates the
     primed vars of [p1] and [p2], which are assumed to be disjoint. *)
@@ -90,14 +97,3 @@ val check_implication_for_footprint :
 
 val find_minimum_pure_cover : Tenv.t -> (atom list * 'a) list -> (atom list * 'a) list option
 (** Find minimum set of pi's in [cases] whose disjunction covers true *)
-
-(** {2 Subtype checking} *)
-
-module Subtyping_check : sig
-  val check_subtype : Tenv.t -> Typ.t -> Typ.t -> bool
-  (** check_subtype t1 t2 checks whether t1 is a subtype of t2, given the type environment tenv. *)
-
-  val subtype_case_analysis : Tenv.t -> Exp.t -> Exp.t -> Exp.t option * Exp.t option
-  (** subtype_case_analysis tenv tecp1 texp2 performs case analysis on [texp1 <: texp2], and returns
-      the updated types in the true and false case, if they are possible *)
-end

@@ -52,9 +52,11 @@ let evaluate_static_guard label_o (e_fun, arg_ts) =
           let name = Procname.hashable_name n in
           let re = Str.regexp label.ToplAst.procedure_name in
           let result = Str.string_match re name 0 in
-          tt "  check name='%s'@\n" name ; result
+          tt "  check name='%s'@\n" name ;
+          result
       | _ ->
-          tt "  check name-unknown@\n" ; false
+          tt "  check name-unknown@\n" ;
+          false
     in
     let pattern_len = Option.map ~f:List.length label.ToplAst.arguments in
     let match_args () =
@@ -65,8 +67,16 @@ let evaluate_static_guard label_o (e_fun, arg_ts) =
     in
     tt "match name-pattern='%s' arg-len-pattern=%a@\n" label.ToplAst.procedure_name
       (Pp.option Int.pp) pattern_len ;
-    let log f = f () || (tt "  match result FALSE@\n" ; false) in
-    log match_args && log match_name && (tt "  match result TRUE@\n" ; true)
+    let log f =
+      f ()
+      ||
+      ( tt "  match result FALSE@\n" ;
+        false )
+    in
+    log match_args && log match_name
+    &&
+    ( tt "  match result TRUE@\n" ;
+      true )
   in
   Option.value_map ~default:true ~f:evaluate_nonany label_o
 
@@ -130,7 +140,11 @@ let add_types tenv =
     let record_predicate =
       ToplAst.(
         function
-        | Binop (_, v1, v2) -> record_value v1 ; record_value v2 | Value v -> record_value v)
+        | Binop (_, v1, v2) ->
+            record_value v1 ;
+            record_value v2
+        | Value v ->
+            record_value v)
     in
     let record_assignment (reg, _) = record reg in
     let record_label label =
@@ -163,7 +177,9 @@ let instrument tenv procdesc =
     let f _node = instrument_instruction in
     tt "instrument@\n" ;
     let _updated = Procdesc.replace_instrs_by procdesc ~f in
-    tt "add types@\n" ; add_types tenv ; tt "done@\n" )
+    tt "add types@\n" ;
+    add_types tenv ;
+    tt "done@\n" )
 
 
 (** [lookup_static_var var prop] expects [var] to have the form [Exp.Lfield (obj, fieldname)], and
@@ -227,13 +243,10 @@ let conjoin_props env post pre =
     To compute (pre & post) the function [conjoin_props] from above is used, which returns a weaker
     formula: in particular, the spatial part of pre is dropped. To get around some limitations of
     the prover we also use [lookup_static_var]; if a call to this function fails, we don't warn. *)
-let add_errors exe_env summary =
-  let proc_desc = summary.Summary.proc_desc in
+let add_errors env proc_desc err_log biabduction_summary =
   let proc_name = Procdesc.get_proc_name proc_desc in
   if not (ToplUtils.is_synthesized proc_name) then
-    let env = Exe_env.get_tenv exe_env proc_name in
     let preposts : Prop.normal BiabductionSummary.spec list =
-      let biabduction_summary = summary.Summary.payloads.Payloads.biabduction in
       let check_phase x =
         if not BiabductionSummary.(equal_phase x.phase RE_EXECUTION) then
           L.die InternalError "Topl.add_errors should only be called after RE_EXECUTION"
@@ -269,7 +282,7 @@ let add_errors exe_env summary =
               let property, _vname = ToplAutomaton.vname (Lazy.force automaton) error in
               let message = Printf.sprintf "property %s reaches error" property in
               tt "WARN@\n" ;
-              Reporting.log_error summary IssueType.topl_error ~loc message )
+              Reporting.log_issue proc_desc err_log TOPL IssueType.topl_error ~loc message )
           in
           (* Don't warn if [lookup_static_var] fails. *)
           Option.iter ~f:handle_state_post_value (lookup_static_var env state_var post)
@@ -294,3 +307,11 @@ let sourcefile () =
 let cfg () =
   if not (is_active ()) then L.die InternalError "Called Topl.cfg when Topl is inactive" ;
   ToplMonitor.cfg ()
+
+
+let instrument_callback biabduction
+    ({InterproceduralAnalysis.proc_desc; tenv; err_log} as analysis_data) =
+  if is_active () then instrument tenv proc_desc ;
+  let biabduction_summary = biabduction analysis_data in
+  if is_active () then add_errors tenv proc_desc err_log biabduction_summary ;
+  biabduction_summary

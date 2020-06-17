@@ -14,12 +14,17 @@ module L = Logging
 module CLOpt = CommandLineOption
 
 let clear_caches_except_lrus () =
-  Summary.OnDisk.clear_cache () ; Procname.SQLite.clear_cache () ; BufferOverrunUtils.clear_cache ()
+  Summary.OnDisk.clear_cache () ;
+  Procname.SQLite.clear_cache () ;
+  BufferOverrunUtils.clear_cache ()
 
 
-let clear_caches () = Ondemand.LocalCache.clear () ; clear_caches_except_lrus ()
+let clear_caches () =
+  Ondemand.LocalCache.clear () ;
+  clear_caches_except_lrus ()
 
-let analyze_target : (SchedulerTypes.target, Procname.t) Tasks.doer =
+
+let analyze_target : (TaskSchedulerTypes.target, Procname.t) Tasks.doer =
   let analyze_source_file exe_env source_file =
     if Topl.is_active () then DB.Results_dir.init (Topl.sourcefile ()) ;
     DB.Results_dir.init source_file ;
@@ -30,7 +35,7 @@ let analyze_target : (SchedulerTypes.target, Procname.t) Tasks.doer =
             DotCfg.emit_frontend_cfg (Topl.sourcefile ()) (Topl.cfg ()) ;
           if Config.write_html then Printer.write_all_html_files source_file ;
           None
-        with RestartScheduler.ProcnameAlreadyLocked pname -> Some pname )
+        with TaskSchedulerTypes.ProcnameAlreadyLocked pname -> Some pname )
   in
   (* In call-graph scheduling, log progress every [per_procedure_logging_granularity] procedures.
      The default roughly reflects the average number of procedures in a C++ file. *)
@@ -46,7 +51,7 @@ let analyze_target : (SchedulerTypes.target, Procname.t) Tasks.doer =
     try
       Ondemand.analyze_proc_name_toplevel exe_env proc_name ;
       None
-    with RestartScheduler.ProcnameAlreadyLocked pname -> Some pname
+    with TaskSchedulerTypes.ProcnameAlreadyLocked pname -> Some pname
   in
   fun target ->
     let exe_env = Exe_env.mk () in
@@ -57,19 +62,6 @@ let analyze_target : (SchedulerTypes.target, Procname.t) Tasks.doer =
         analyze_proc_name exe_env procname
     | File source_file ->
         analyze_source_file exe_env source_file
-
-
-let output_json_makefile_stats files =
-  let num_files = List.length files in
-  let num_procs = 0 in
-  (* can't compute it at this stage *)
-  let num_lines = 0 in
-  let file_stats =
-    `Assoc [("files", `Int num_files); ("procedures", `Int num_procs); ("lines", `Int num_lines)]
-  in
-  (* write stats file to disk, intentionally overwriting old file if it already exists *)
-  let f = Out_channel.create (Filename.concat Config.results_dir Config.proc_stats_filename) in
-  Yojson.Basic.pretty_to_channel f file_stats
 
 
 let source_file_should_be_analyzed ~changed_files source_file =
@@ -137,12 +129,16 @@ let tasks_generator_builder_for sources =
 
 let analyze source_files_to_analyze =
   if Int.equal Config.jobs 1 then (
-    let target_files = List.rev_map source_files_to_analyze ~f:(fun sf -> SchedulerTypes.File sf) in
+    let target_files =
+      List.rev_map (Lazy.force source_files_to_analyze) ~f:(fun sf -> TaskSchedulerTypes.File sf)
+    in
     Tasks.run_sequentially ~f:analyze_target target_files ;
     BackendStats.get () )
   else (
     L.environment_info "Parallel jobs: %d@." Config.jobs ;
-    let build_tasks_generator () = tasks_generator_builder_for source_files_to_analyze in
+    let build_tasks_generator () =
+      tasks_generator_builder_for (Lazy.force source_files_to_analyze)
+    in
     (* Prepare tasks one file at a time while executing in parallel *)
     RestartScheduler.setup () ;
     let runner =
@@ -184,7 +180,9 @@ let invalidate_changed_procedures changed_files =
       CallGraph.to_dotty reverse_callgraph "reverse_analysis_callgraph.dot" ;
     let invalidated_nodes =
       CallGraph.fold_flagged reverse_callgraph
-        ~f:(fun node acc -> SpecsFiles.delete node.pname ; acc + 1)
+        ~f:(fun node acc ->
+          SpecsFiles.delete node.pname ;
+          acc + 1 )
         0
     in
     L.progress
@@ -195,7 +193,7 @@ let invalidate_changed_procedures changed_files =
     ScubaLogging.log_count ~label:"incremental_analysis.invalidated_nodes" ~value:invalidated_nodes ;
     (* save some memory *)
     CallGraph.reset reverse_callgraph ;
-    ResultsDir.delete_capture_and_results_data () )
+    ResultsDir.scrub_for_incremental () )
 
 
 let main ~changed_files =
@@ -207,7 +205,7 @@ let main ~changed_files =
       Summary.OnDisk.reset_all ~filter:(Lazy.force Filtering.procedures_filter) () ;
       L.progress "Done@." )
     else if not Config.incremental_analysis then DB.Results_dir.clean_specs_dir () ;
-  let source_files = get_source_files_to_analyze ~changed_files in
+  let source_files = lazy (get_source_files_to_analyze ~changed_files) in
   (* empty all caches to minimize the process heap to have less work to do when forking *)
   clear_caches () ;
   let stats = analyze source_files in
@@ -217,4 +215,4 @@ let main ~changed_files =
     (ExecutionDuration.wall_time analysis_duration) ;
   L.debug Analysis Quiet "Collected stats:@\n%a@." BackendStats.pp stats ;
   BackendStats.log_to_scuba stats ;
-  output_json_makefile_stats source_files
+  ()

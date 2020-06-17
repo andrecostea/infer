@@ -13,9 +13,11 @@ module L = Logging
 type t = {classname: string; package: string option} [@@deriving compare, equal]
 
 module Map = Caml.Map.Make (struct
-  type nonrec t = t
+  type nonrec t = t [@@deriving compare]
+end)
 
-  let compare = compare
+module Set = Caml.Set.Make (struct
+  type nonrec t = t [@@deriving compare]
 end)
 
 let make ~package ~classname =
@@ -57,29 +59,43 @@ let is_int s =
   with Failure _ -> false
 
 
-(* Strips $<int> suffixes from the class name, and return how many were stripped *)
-let strip_anonymous_suffixes_if_present classname =
-  let rec strip_recursively classname nesting_level =
-    match String.rsplit2 classname ~on:'$' with
-    | Some (outer, suffix) when is_int suffix ->
-        (* Suffix is an integer - that was an anonymous class.
-           But it could be nested inside another anonymous class as well *)
-        strip_recursively outer (nesting_level + 1)
-    | _ ->
-        (* Suffix is not an integer or not present - not an anonymous class *)
-        (classname, nesting_level)
-  in
-  strip_recursively classname 0
+let get_outer_class_name {package; classname} =
+  String.rsplit2 classname ~on:'$' |> Option.map ~f:(fun (outer, _) -> {package; classname= outer})
 
 
 (*
- Anonymous classes have suffixes in form of $<int>; but they can be nested inside of each other.
+ Anonymous classes have two forms:
+ - classic anonymous classes: suffixes in form of $<int>.
+ - classes corresponding to lambda-expressions: they are manifested as $Lambda$.
+ - two forms above nested inside each other.
  Also non-anonymous (user-defined) name can be nested as well (Class$NestedClass).
- So in general case anonymous class name looks something like
- Class$NestedClass$1$17$5, and we need to return Class$NestedClass *)
+ In general case anonymous class name looks something like
+ Class$NestedClass$1$17$5$Lambda$_1_2, and we need to return Class$NestedClass *)
 let get_user_defined_class_if_anonymous_inner {package; classname} =
-  let outer_class_name, nesting_level = strip_anonymous_suffixes_if_present classname in
-  if nesting_level > 0 then Some {package; classname= outer_class_name} else None
+  let is_anonymous_name = function
+    | "Lambda" ->
+        true
+    | name when is_int name ->
+        true
+    | _ ->
+        false
+  in
+  let pieces = String.split classname ~on:'$' in
+  let first_anonymous_name = List.findi pieces ~f:(fun _index name -> is_anonymous_name name) in
+  Option.bind first_anonymous_name ~f:(fun (index, _name) ->
+      (* Everything before this index did not have anonymous prefixes. Deem it user defined. *)
+      match List.take pieces index with
+      | [] ->
+          (* This is a weird situation - our class _starts_ with an anonymous name.
+             This should not happen normally, but we can not rule this out completely since there is no physical limitations on
+             the bytecode names.
+             In this case, we return [None] because formally this is not an anonymous _inner_ class, but anonymous outermost class instead.
+             TODO: redesign this API so this case is modelled directly
+          *)
+          None
+      | list ->
+          (* Assemble back all pieces together *)
+          Some {package; classname= String.concat ~sep:"$" list} )
 
 
 let is_anonymous_inner_class_name t = get_user_defined_class_if_anonymous_inner t |> is_some

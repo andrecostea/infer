@@ -27,8 +27,7 @@ open! IStd
     - get_proc_desc to get a proc desc from a proc name
     - Type environment.
     - Procedure for the callback to act on. *)
-type proc_callback_args =
-  {get_procs_in_file: Procname.t -> Procname.t list; summary: Summary.t; exe_env: Exe_env.t}
+type proc_callback_args = {summary: Summary.t; exe_env: Exe_env.t}
 
 (* Result is updated summary with all information relevant for the checker (including list of errors found by the checker for this procedure *)
 type proc_callback_t = proc_callback_args -> Summary.t
@@ -45,8 +44,8 @@ val register_procedure_callback :
 (** Register a procedure callback (see details above) *)
 
 val register_file_callback :
-  checker_name:string -> Language.t -> file_callback_t -> issue_dir:string -> unit
-(** Register a file callback (see details above). [issue_dir] must be unique for this type of
+  checker_name:string -> Language.t -> file_callback_t -> issue_dir:ResultsDirEntryName.id -> unit
+(** Register a file callback (see details above). [issues_dir] must be unique for this type of
     checker. *)
 
 val iterate_procedure_callbacks : Exe_env.t -> Summary.t -> Summary.t

@@ -1,10 +1,21 @@
 /* @generated */
 digraph cfg {
-"test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_1" [label="1: Start NpeMallocC::test\nFormals:  self:NpeMallocC*\nLocals:  person:Person* \n  " color=yellow style=filled]
+"dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_1" [label="1: Start NpeMallocC.dealloc\nFormals:  self:NpeMallocC*\nLocals:  \n  " color=yellow style=filled]
+	
+
+	 "dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_1" -> "dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_3" ;
+"dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_2" [label="2: Exit NpeMallocC.dealloc \n  " color=yellow style=filled]
+	
+
+"dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_3" [label="3:  Call dealloc \n  " shape="box"]
+	
+
+	 "dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_3" -> "dealloc#NpeMallocC#instance.284c29ca815697ec1f10b1449c2b53cc_2" ;
+"test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_1" [label="1: Start NpeMallocC.test\nFormals:  self:NpeMallocC*\nLocals:  person:Person* \n  " color=yellow style=filled]
 	
 
 	 "test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_1" -> "test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_5" ;
-"test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_2" [label="2: Exit NpeMallocC::test \n  " color=yellow style=filled]
+"test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_2" [label="2: Exit NpeMallocC.test \n  " color=yellow style=filled]
 	
 
 "test#NpeMallocC#instance.736ba93f935cc64d6e9c549cc16c07a7_3" [label="3:  Return Stmt \n   n$0=*&person:Person* [line 25, column 10]\n  *&return:Person*=n$0 [line 25, column 3]\n " shape="box"]

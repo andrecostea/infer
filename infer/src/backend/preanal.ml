@@ -156,12 +156,12 @@ module Liveness = struct
       instructions for each pvar in to_nullify afer we finish the analysis. Nullify instructions
       speed up the analysis by enabling it to GC state that will no longer be read. *)
   module NullifyTransferFunctions = struct
-    module Domain = AbstractDomain.Pair (VarDomain) (VarDomain)
     (** (reaching non-nullified vars) * (vars to nullify) *)
+    module Domain = AbstractDomain.Pair (VarDomain) (VarDomain)
 
     module CFG = ProcCfg.Exceptional
 
-    type extras = LivenessAnalysis.invariant_map
+    type analysis_data = LivenessAnalysis.invariant_map ProcData.t
 
     let postprocess ((reaching_defs, _) as astate) node {ProcData.extras} =
       let node_id = Procdesc.Node.get_id (CFG.Node.underlying_node node) in
@@ -234,14 +234,14 @@ module Liveness = struct
         (* can't take the address of a variable in Java *)
       else
         let initial = AddressTaken.Domain.empty in
-        match AddressTaken.Analyzer.compute_post (ProcData.make_default summary tenv) ~initial with
+        match AddressTaken.Analyzer.compute_post () ~initial (Summary.get_proc_desc summary) with
         | Some post ->
             post
         | None ->
             AddressTaken.Domain.empty
     in
     let nullify_proc_cfg = ProcCfg.Exceptional.from_pdesc (Summary.get_proc_desc summary) in
-    let nullify_proc_data = ProcData.make summary tenv liveness_inv_map in
+    let nullify_proc_data = {ProcData.summary; tenv; extras= liveness_inv_map} in
     let initial = (VarDomain.empty, VarDomain.empty) in
     let nullify_inv_map = NullifyAnalysis.exec_cfg nullify_proc_cfg nullify_proc_data ~initial in
     (* only nullify pvars that are local; don't nullify those that can escape *)
@@ -297,17 +297,14 @@ module Liveness = struct
   let process summary tenv =
     let liveness_proc_cfg = BackwardCfg.from_pdesc (Summary.get_proc_desc summary) in
     let initial = Liveness.Domain.empty in
-    let liveness_inv_map =
-      LivenessAnalysis.exec_cfg liveness_proc_cfg (ProcData.make_default summary tenv) ~initial
-    in
+    let liveness_inv_map = LivenessAnalysis.exec_cfg liveness_proc_cfg () ~initial in
     add_nullify_instrs summary tenv liveness_inv_map
 end
 
 module FunctionPointerSubstitution = struct
-  let process summary tenv =
-    let updated = FunctionPointers.substitute_function_pointers summary tenv in
-    let pdesc = Summary.get_proc_desc summary in
-    if updated then Attributes.store ~proc_desc:(Some pdesc) (Procdesc.get_attributes pdesc)
+  let process proc_desc =
+    let updated = FunctionPointers.substitute_function_pointers proc_desc in
+    if updated then Attributes.store ~proc_desc:(Some proc_desc) (Procdesc.get_attributes proc_desc)
 end
 
 (** pre-analysis to cut control flow after calls to functions whose type indicates they do not
@@ -379,8 +376,9 @@ let do_preanalysis exe_env pdesc =
   let proc_name = Procdesc.get_proc_name pdesc in
   if Procname.is_java proc_name then InlineJavaSyntheticMethods.process pdesc ;
   if Config.function_pointer_specialization && not (Procname.is_java proc_name) then
-    FunctionPointerSubstitution.process summary tenv ;
+    FunctionPointerSubstitution.process pdesc ;
   Liveness.process summary tenv ;
   AddAbstractionInstructions.process pdesc ;
+  if Procname.is_java proc_name then Devirtualizer.process summary tenv ;
   NoReturn.process tenv pdesc ;
   ()

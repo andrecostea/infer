@@ -227,11 +227,17 @@ module Name : sig
     val is_class : t -> bool
     (** [is_class name] holds if [name] names a Java class *)
 
+    val get_java_class_name_exn : t -> JavaClassName.t
+    (** Ensure [name] is a java class name and return underlying JavaClassName *)
+
     val is_external : t -> bool
     (** return true if the typename is in the .inferconfig list of external classes *)
 
     val is_anonymous_inner_class_name_exn : t -> bool
     (** Throws if it is not a Java class *)
+
+    val is_anonymous_inner_class_name_opt : t -> bool option
+    (** return None if it is not a Java class *)
 
     val java_lang_object : t
 
@@ -261,9 +267,9 @@ module Name : sig
     val protocol_from_qual_name : QualifiedCppName.t -> t
   end
 
-  module Set : Caml.Set.S with type elt = t
+  module Set : PrettyPrintable.PPSet with type elt = t
 
-  module Map : Caml.Map.S with type key = t
+  module Map : PrettyPrintable.PPMap with type key = t
 end
 
 val equal : t -> t -> bool

@@ -113,7 +113,7 @@ let debug_eval_end result =
 let save_dotty_when_in_debug_mode source_file =
   match !ctl_evaluation_tracker with
   | Some tracker ->
-      let dotty_dir = Config.results_dir ^/ Config.lint_dotty_dir_name in
+      let dotty_dir = ResultsDir.get_path LintDotty in
       Utils.create_dir dotty_dir ;
       let source_file_basename = Filename.basename (SourceFile.to_abs_path source_file) in
       let file = dotty_dir ^/ source_file_basename ^ ".dot" in
@@ -999,4 +999,5 @@ and eval_formula ?keep_witness f an lcxt : Ctl_parser_types.ast_node option =
     | InObjCClass (f1, f2) ->
         eval_InObjCClass an lcxt f1 f2
   in
-  debug_eval_end res ; res
+  debug_eval_end res ;
+  res

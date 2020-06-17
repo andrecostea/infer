@@ -36,7 +36,7 @@ let final_typestates initializers_current_class tenv typecheck_proc =
         PatternMatch.proc_calls (PatternMatch.lookup_attributes tenv) init_pd filter
       in
       let do_called (callee_pn, _) =
-        match Ondemand.get_proc_desc callee_pn with
+        match Procdesc.load callee_pn with
         | Some callee_pd ->
             res := (callee_pn, callee_pd) :: !res
         | None ->
@@ -44,7 +44,8 @@ let final_typestates initializers_current_class tenv typecheck_proc =
       in
       List.iter ~f:do_called private_called
     in
-    List.iter ~f:do_proc initializers ; !res
+    List.iter ~f:do_proc initializers ;
+    !res
   in
   (* Get the initializers recursively called by computing a fixpoint.
      Start from the initializers of the current class and the current procedure. *)
@@ -64,7 +65,9 @@ let final_typestates initializers_current_class tenv typecheck_proc =
       mark_seen initializers_new' ;
       if not (List.is_empty initializers_new') then fixpoint initializers_new'
     in
-    mark_seen initializers_base_case ; fixpoint initializers_base_case ; !res
+    mark_seen initializers_base_case ;
+    fixpoint initializers_base_case ;
+    !res
   in
   (* Get the final typestates of all the initializers. *)
   let final_typestates = ref [] in
@@ -79,7 +82,7 @@ let final_typestates initializers_current_class tenv typecheck_proc =
   List.rev !final_typestates
 
 
-let pname_and_pdescs_with tenv curr_pname get_procs_in_file f =
+let pname_and_pdescs_with tenv curr_pname f =
   let res = ref [] in
   let filter pname =
     match PatternMatch.lookup_attributes tenv pname with
@@ -90,13 +93,9 @@ let pname_and_pdescs_with tenv curr_pname get_procs_in_file f =
   in
   let do_proc pname =
     if filter pname then
-      match Ondemand.get_proc_desc pname with
-      | Some pdesc ->
-          res := (pname, pdesc) :: !res
-      | None ->
-          ()
+      match Procdesc.load pname with Some pdesc -> res := (pname, pdesc) :: !res | None -> ()
   in
-  List.iter ~f:do_proc (get_procs_in_file curr_pname) ;
+  List.iter ~f:do_proc (SourceFiles.get_procs_in_file curr_pname) ;
   List.rev !res
 
 
@@ -105,21 +104,22 @@ let get_class pn =
 
 
 (** Typestates after the current procedure and all initializer procedures. *)
-let final_initializer_typestates_lazy tenv curr_pname curr_pdesc get_procs_in_file typecheck_proc =
+let final_initializer_typestates_lazy tenv curr_pname curr_pdesc typecheck_proc =
   lazy
     (let is_initializer proc_attributes =
        PatternMatch.method_is_initializer tenv proc_attributes
        ||
        let ia =
          (* TODO(T62825735): support trusted callees for fields *)
-         (Models.get_modelled_annotated_signature ~is_trusted_callee:false tenv proc_attributes)
+         (Models.get_modelled_annotated_signature ~is_callee_in_trust_list:false tenv
+            proc_attributes)
            .AnnotatedSignature.ret
            .ret_annotation_deprecated
        in
        Annotations.ia_is_initializer ia
      in
      let initializers_current_class =
-       pname_and_pdescs_with tenv curr_pname get_procs_in_file (function pname, proc_attributes ->
+       pname_and_pdescs_with tenv curr_pname (function pname, proc_attributes ->
            is_initializer proc_attributes
            && equal_class_opt (get_class pname) (get_class curr_pname) )
      in
@@ -128,11 +128,10 @@ let final_initializer_typestates_lazy tenv curr_pname curr_pdesc get_procs_in_fi
 
 
 (** Typestates after all constructors. *)
-let final_constructor_typestates_lazy tenv curr_pname get_procs_in_file typecheck_proc =
+let final_constructor_typestates_lazy tenv curr_pname typecheck_proc =
   lazy
     (let constructors_current_class =
-       pname_and_pdescs_with tenv curr_pname get_procs_in_file (fun (pname, _) ->
-           Procname.is_constructor pname && equal_class_opt (get_class pname) (get_class curr_pname)
-       )
+       pname_and_pdescs_with tenv curr_pname (fun (pname, _) ->
+           Procname.is_constructor pname && equal_class_opt (get_class pname) (get_class curr_pname) )
      in
      final_typestates constructors_current_class tenv typecheck_proc )

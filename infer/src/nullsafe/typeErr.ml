@@ -9,6 +9,7 @@ open! IStd
 module Hashtbl = Caml.Hashtbl
 module MF = MarkupFormatter
 module P = Printf
+module F = Format
 
 (** Module for Type Error messages. *)
 
@@ -51,7 +52,8 @@ module InstrRef : InstrRefT = struct
 
   let gen instr_ref_gen =
     let node, ir = instr_ref_gen in
-    incr ir ; (node, !ir)
+    incr ir ;
+    (node, !ir)
 end
 
 (* InstrRef *)
@@ -81,6 +83,22 @@ type err_instance =
       ; assignment_type: AssignmentRule.ReportableViolation.assignment_type
       ; rhs_origin: TypeOrigin.t }
 [@@deriving compare]
+
+let pp_err_instance fmt err_instance =
+  match err_instance with
+  | Condition_redundant _ ->
+      F.pp_print_string fmt "Condition_redundant"
+  | Inconsistent_subclass _ ->
+      F.pp_print_string fmt "Inconsistent_subclass"
+  | Field_not_initialized _ ->
+      F.pp_print_string fmt "Field_not_initialized"
+  | Over_annotation _ ->
+      F.pp_print_string fmt "Over_annotation"
+  | Nullable_dereference _ ->
+      F.pp_print_string fmt "Nullable_dereference"
+  | Bad_assignment {rhs_origin} ->
+      F.fprintf fmt "Bad_assignment: rhs %s" (TypeOrigin.to_string rhs_origin)
+
 
 module H = Hashtbl.Make (struct
   type t = err_instance * InstrRef.t option [@@deriving compare]
@@ -147,20 +165,10 @@ let add_err find_canonical_duplicate err_instance instr_ref_opt loc =
       | _ ->
           instr_ref_opt
     in
+    Logging.debug Analysis Medium "Registering an issue: %a@\n" pp_err_instance err_instance ;
     H.add err_tbl (err_instance, instr_ref_opt_deduplicate) {loc; always= true} ;
     not is_forall
 
-
-type st_report_error =
-     Procname.t
-  -> Procdesc.t
-  -> IssueType.t
-  -> Location.t
-  -> ?field_name:Fieldname.t option
-  -> ?exception_kind:(IssueType.t -> Localise.error_desc -> exn)
-  -> severity:Exceptions.severity
-  -> string
-  -> unit
 
 (* If an error is related to a particular field, we support suppressing the
    error via a supress annotation placed near the field declaration *)
@@ -207,95 +215,84 @@ let get_nonnull_explanation_for_condition_redudant (nonnull_origin : TypeOrigin.
       " according to the existing annotations"
 
 
-(** If error is reportable to the user, return a callback for getting a description, severity etc.
-    Otherwise return None. *)
-let get_error_info_fetcher_if_reportable ~nullsafe_mode err_instance =
+(** If error is reportable to the user, return its information. Otherwise return [None]. *)
+let get_error_info_if_reportable_lazy ~nullsafe_mode err_instance =
   let open IOption.Let_syntax in
   match err_instance with
   | Condition_redundant {is_always_true; condition_descr; nonnull_origin} ->
       Some
-        (let fetcher () =
-           ( P.sprintf "The condition %s might be always %b%s."
-               (Option.value condition_descr ~default:"")
-               is_always_true
-               (get_nonnull_explanation_for_condition_redudant nonnull_origin)
-           , IssueType.eradicate_condition_redundant
-           , None
-           , (* Condition redundant is a very non-precise issue. Depending on the origin of what is compared with null,
-                this can have a lot of reasons to be actually nullable.
-                Until it is made non-precise, it is recommended to not turn this warning on.
-                But even when it is on, this should not be more than advice.
-             *)
-             Exceptions.Advice )
-         in
-         fetcher )
+        ( lazy
+          ( P.sprintf "The condition %s might be always %b%s."
+              (Option.value condition_descr ~default:"")
+              is_always_true
+              (get_nonnull_explanation_for_condition_redudant nonnull_origin)
+          , IssueType.eradicate_condition_redundant
+          , None
+          , (* Condition redundant is a very non-precise issue. Depending on the origin of what is compared with null,
+               this can have a lot of reasons to be actually nullable.
+               Until it is made non-precise, it is recommended to not turn this warning on.
+               But even when it is on, this should not be more than advice.
+            *)
+            IssueType.Advice ) )
   | Over_annotation {over_annotated_violation; violation_type} ->
       Some
-        (let fetcher () =
-           ( OverAnnotatedRule.violation_description over_annotated_violation violation_type
-           , ( match violation_type with
-             | OverAnnotatedRule.FieldOverAnnoted _ ->
-                 IssueType.eradicate_field_over_annotated
-             | OverAnnotatedRule.ReturnOverAnnotated _ ->
-                 IssueType.eradicate_return_over_annotated )
-           , None
-           , (* Very non-precise issue. Should be actually turned off unless for experimental purposes. *)
-             Exceptions.Advice )
-         in
-         fetcher )
+        ( lazy
+          ( OverAnnotatedRule.violation_description over_annotated_violation violation_type
+          , ( match violation_type with
+            | OverAnnotatedRule.FieldOverAnnoted _ ->
+                IssueType.eradicate_field_over_annotated
+            | OverAnnotatedRule.ReturnOverAnnotated _ ->
+                IssueType.eradicate_return_over_annotated )
+          , None
+          , (* Very non-precise issue. Should be actually turned off unless for experimental purposes. *)
+            IssueType.Advice ) )
   | Field_not_initialized {field_name} ->
       Some
-        (let fetcher () =
-           ( Format.asprintf
-               "Field %a is declared non-nullable, so it should be initialized in the constructor \
-                or in an `@Initializer` method"
-               MF.pp_monospaced
-               (Fieldname.get_field_name field_name)
-           , IssueType.eradicate_field_not_initialized
-           , None
-           , NullsafeMode.severity nullsafe_mode )
-         in
-         fetcher )
+        ( lazy
+          ( Format.asprintf
+              "Field %a is declared non-nullable, so it should be initialized in the constructor \
+               or in an `@Initializer` method"
+              MF.pp_monospaced
+              (Fieldname.get_field_name field_name)
+          , IssueType.eradicate_field_not_initialized
+          , None
+          , NullsafeMode.severity nullsafe_mode ) )
   | Bad_assignment {rhs_origin; assignment_location; assignment_type; assignment_violation} ->
-      (* If violation is reportable, create a fetcher, otherwise None *)
+      (* If violation is reportable, create tuple, otherwise None *)
       let+ reportable_violation =
         AssignmentRule.ReportableViolation.from nullsafe_mode assignment_violation
       in
-      let fetcher () =
-        let description, issue_type, error_location =
-          AssignmentRule.ReportableViolation.get_description ~assignment_location assignment_type
-            ~rhs_origin reportable_violation
-        in
-        let severity = AssignmentRule.ReportableViolation.get_severity reportable_violation in
-        (description, issue_type, Some error_location, severity)
-      in
-      fetcher
+      lazy
+        (let description, issue_type, error_location =
+           AssignmentRule.ReportableViolation.get_description ~assignment_location assignment_type
+             ~rhs_origin reportable_violation
+         in
+         let severity = AssignmentRule.ReportableViolation.get_severity reportable_violation in
+         (description, issue_type, Some error_location, severity) )
   | Nullable_dereference
       { dereference_violation
       ; dereference_location
       ; nullable_object_descr
       ; dereference_type
       ; nullable_object_origin } ->
-      (* If violation is reportable, create a fetcher, otherwise None *)
+      (* If violation is reportable, create tuple, otherwise None *)
       let+ reportable_violation =
         DereferenceRule.ReportableViolation.from nullsafe_mode dereference_violation
       in
-      let fetcher () =
-        let description, issue_type, error_location =
-          DereferenceRule.ReportableViolation.get_description reportable_violation
-            ~dereference_location dereference_type ~nullable_object_descr ~nullable_object_origin
-        in
-        let severity = DereferenceRule.ReportableViolation.get_severity reportable_violation in
-        (description, issue_type, Some error_location, severity)
-      in
-      fetcher
+      lazy
+        (let description, issue_type, error_location =
+           DereferenceRule.ReportableViolation.get_description reportable_violation
+             ~dereference_location dereference_type ~nullable_object_descr ~nullable_object_origin
+         in
+         let severity = DereferenceRule.ReportableViolation.get_severity reportable_violation in
+         (description, issue_type, Some error_location, severity) )
   | Inconsistent_subclass
       {inheritance_violation; violation_type; base_proc_name; overridden_proc_name} ->
-      (* If violation is reportable, create a fetcher, otherwise None *)
+      (* If violation is reportable, create tuple, otherwise None *)
       let+ reportable_violation =
         InheritanceRule.ReportableViolation.from nullsafe_mode inheritance_violation
       in
-      let fetcher () =
+      lazy
         ( InheritanceRule.ReportableViolation.get_description reportable_violation violation_type
             ~base_proc_name ~overridden_proc_name
         , ( match violation_type with
@@ -305,55 +302,51 @@ let get_error_info_fetcher_if_reportable ~nullsafe_mode err_instance =
               IssueType.eradicate_inconsistent_subclass_parameter_annotation )
         , None
         , InheritanceRule.ReportableViolation.get_severity reportable_violation )
-      in
-      fetcher
 
 
 (** If error is reportable to the user, return description, severity etc. Otherwise return None. *)
 let get_error_info_if_reportable ~nullsafe_mode err_instance =
-  get_error_info_fetcher_if_reportable ~nullsafe_mode err_instance
-  |> Option.map ~f:(fun fetcher -> fetcher ())
+  get_error_info_if_reportable_lazy ~nullsafe_mode err_instance |> Option.map ~f:Lazy.force
 
 
 let is_reportable ~nullsafe_mode err_instance =
-  (* Optimization: we don't fetch the whole info (that might involve string manipulations). *)
-  get_error_info_fetcher_if_reportable ~nullsafe_mode err_instance |> Option.is_some
+  (* Note: we don't fetch the whole info because the the class-level analysis breaks some
+     assumptions of this function, and also for optimization purposes (saving some string
+     manipulations). *)
+  get_error_info_if_reportable_lazy ~nullsafe_mode err_instance |> Option.is_some
 
 
-let report_now_if_reportable (st_report_error : st_report_error) err_instance ~nullsafe_mode loc
-    pdesc =
-  let pname = Procdesc.get_proc_name pdesc in
+let report_now_if_reportable analysis_data err_instance ~nullsafe_mode loc =
   get_error_info_if_reportable ~nullsafe_mode err_instance
   |> Option.iter ~f:(fun (err_description, infer_issue_type, updated_location, severity) ->
+         Logging.debug Analysis Medium "About to report: %s" err_description ;
          let field_name = get_field_name_for_error_suppressing err_instance in
          let error_location = Option.value updated_location ~default:loc in
-         st_report_error pname pdesc infer_issue_type error_location ~field_name
-           ~exception_kind:(fun k d -> Exceptions.Eradicate (k, d))
-           ~severity err_description )
+         EradicateReporting.report_error analysis_data Eradicate infer_issue_type error_location
+           ~field_name ~severity err_description )
 
 
 (** Register issue (unless exactly the same issue was already registered). If needed, report this
     error immediately. *)
-let register_error (st_report_error : st_report_error) find_canonical_duplicate err_instance
-    ~nullsafe_mode instr_ref_opt loc pdesc =
+let register_error analysis_data find_canonical_duplicate err_instance ~nullsafe_mode instr_ref_opt
+    loc =
   let should_report_now = add_err find_canonical_duplicate err_instance instr_ref_opt loc in
-  if should_report_now then
-    report_now_if_reportable st_report_error err_instance ~nullsafe_mode loc pdesc
+  if should_report_now then report_now_if_reportable analysis_data err_instance ~nullsafe_mode loc
 
 
-let report_forall_issues_and_reset st_report_error ~nullsafe_mode proc_desc =
+let report_forall_issues_and_reset analysis_data ~nullsafe_mode =
   let iter (err_instance, instr_ref_opt) err_state =
     match (instr_ref_opt, get_forall err_instance) with
     | Some instr_ref, is_forall ->
         let node = InstrRef.get_node instr_ref in
-        State.set_node node ;
+        AnalysisState.set_node node ;
         if is_forall && err_state.always then
-          report_now_if_reportable st_report_error err_instance err_state.loc ~nullsafe_mode
-            proc_desc
+          report_now_if_reportable analysis_data err_instance err_state.loc ~nullsafe_mode
     | None, _ ->
         ()
   in
-  H.iter iter err_tbl ; reset ()
+  H.iter iter err_tbl ;
+  reset ()
 
 
 let get_errors () =

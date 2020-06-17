@@ -15,18 +15,11 @@ module InstrCFG = ProcCfg.NormalOneInstrPerNode
 module NodeCFG = ProcCfg.Normal
 module Node = ProcCfg.DefaultNode
 
-let attrs_of_pname = Summary.OnDisk.proc_resolve_attributes
-
-module Payload = SummaryPayload.Make (struct
-  type t = CostDomain.summary
-
-  let field = Payloads.Fields.cost
-end)
-
 type extras_WorstCaseCost =
   { inferbo_invariant_map: BufferOverrunAnalysis.invariant_map
   ; integer_type_widths: Typ.IntegerWidths.t
-  ; get_node_nb_exec: Node.id -> BasicCost.t
+  ; inferbo_get_summary: BufferOverrunAnalysisSummary.get_summary
+  ; get_node_nb_exec: Node.t -> BasicCost.t
   ; get_summary: Procname.t -> CostDomain.summary option
   ; get_formals: Procname.t -> (Pvar.t * Typ.t) list option }
 
@@ -61,7 +54,13 @@ module InstrBasicCost = struct
     match instr with
     | Sil.Call (ret, Exp.Const (Const.Cfun callee_pname), params, _, _) when Config.inclusive_cost
       ->
-        let {inferbo_invariant_map; integer_type_widths; get_summary; get_formals} = extras in
+        let { inferbo_invariant_map
+            ; integer_type_widths
+            ; inferbo_get_summary
+            ; get_summary
+            ; get_formals } =
+          extras
+        in
         let operation_cost =
           match
             BufferOverrunAnalysis.extract_pre (InstrCFG.Node.id instr_node) inferbo_invariant_map
@@ -79,7 +78,7 @@ module InstrBasicCost = struct
                   let node_hash = InstrCFG.Node.hash instr_node in
                   let model_env =
                     BufferOverrunUtils.ModelEnv.mk_model_env callee_pname ~node_hash loc tenv
-                      integer_type_widths
+                      integer_type_widths inferbo_get_summary
                   in
                   CostDomain.of_operation_cost (model model_env ~ret inferbo_mem)
               | None -> (
@@ -154,127 +153,42 @@ let compute_errlog_extras cost =
   ; nullsafe_extra= None }
 
 
-module ThresholdReports = struct
-  type threshold_or_report =
-    | Threshold of BasicCost.t
-    | ReportOn of {location: Location.t; cost: BasicCost.t}
-    | NoReport
-
-  type t = threshold_or_report CostIssues.CostKindMap.t
-
-  let none : t = CostIssues.CostKindMap.empty
-
-  let config =
-    CostIssues.CostKindMap.fold
-      (fun kind kind_spec acc ->
-        match kind_spec with
-        | CostIssues.{threshold= Some threshold} ->
-            CostIssues.CostKindMap.add kind (Threshold (BasicCost.of_int_exn threshold)) acc
-        | _ ->
-            acc )
-      CostIssues.enabled_cost_map none
-end
-
-(** Calculate the final Worst Case Cost predicted for each cost field and each WTO component. It is
-    the dot product of the symbolic cost of the node and how many times it is executed. *)
+(** Calculate the final Worst Case Cost of the cfg. It is the dot product of the symbolic cost of
+    the node and how many times it is executed. *)
 module WorstCaseCost = struct
-  type astate = {costs: CostDomain.t; reports: ThresholdReports.t}
-
   (** We don't report when the cost is Top as it corresponds to subsequent 'don't know's. Instead,
       we report Top cost only at the top level per function. *)
-  let exec_node tenv {costs; reports} extras instr_node =
+  let exec_node tenv extras instr_node =
     let {get_node_nb_exec} = extras in
-    let node_cost =
-      let instr_cost_record = InstrBasicCost.get_instr_node_cost_record tenv extras instr_node in
-      let node_id = InstrCFG.Node.underlying_node instr_node |> Node.id in
-      let nb_exec = get_node_nb_exec node_id in
-      if BasicCost.is_top nb_exec then
-        Logging.d_printfln_escaped "Node %a is analyzed to visit infinite (top) times." Node.pp_id
-          node_id ;
-      CostDomain.mult_by instr_cost_record ~nb_exec
-    in
-    let costs = CostDomain.plus costs node_cost in
-    let reports =
-      CostIssues.CostKindMap.merge
-        (fun _kind threshold_or_report_opt cost_opt ->
-          match (threshold_or_report_opt, cost_opt) with
-          | Some ThresholdReports.NoReport, _ ->
-              threshold_or_report_opt
-          | Some ThresholdReports.(Threshold _ | ReportOn _), Some cost when BasicCost.is_top cost
-            ->
-              Some ThresholdReports.NoReport
-          | Some (ThresholdReports.Threshold threshold), Some cost
-            when not (BasicCost.leq ~lhs:cost ~rhs:threshold) ->
-              Some (ThresholdReports.ReportOn {location= InstrCFG.Node.loc instr_node; cost})
-          | Some (ThresholdReports.ReportOn {cost= prev}), Some cost
-            when BasicCost.compare_by_degree prev cost < 0 ->
-              Some (ThresholdReports.ReportOn {location= InstrCFG.Node.loc instr_node; cost})
-          | _ ->
-              threshold_or_report_opt )
-        reports costs
-    in
-    {costs; reports}
+    let instr_cost_record = InstrBasicCost.get_instr_node_cost_record tenv extras instr_node in
+    let node = InstrCFG.Node.underlying_node instr_node in
+    let nb_exec = get_node_nb_exec node in
+    if BasicCost.is_top nb_exec then
+      Logging.d_printfln_escaped "Node %a is analyzed to visit infinite (top) times." Node.pp_id
+        (Node.id node) ;
+    CostDomain.mult_by instr_cost_record ~nb_exec
 
 
-  let rec exec_partition tenv astate extras
-      (partition : InstrCFG.Node.t WeakTopologicalOrder.Partition.t) =
-    match partition with
-    | Empty ->
-        astate
-    | Node {node; next} ->
-        let astate = exec_node tenv astate extras node in
-        exec_partition tenv astate extras next
-    | Component {head; rest; next} ->
-        let {costs; reports} = astate in
-        let {costs} = exec_partition tenv {costs; reports= ThresholdReports.none} extras rest in
-        (* Execute head after the loop body to always report at loop head *)
-        let astate = exec_node tenv {costs; reports} extras head in
-        exec_partition tenv astate extras next
-
-
-  let compute tenv extras instr_cfg_wto =
-    let initial = {costs= CostDomain.zero_record; reports= ThresholdReports.config} in
-    exec_partition tenv initial extras instr_cfg_wto
+  let compute tenv extras cfg =
+    let init = CostDomain.zero_record in
+    InstrCFG.fold_nodes cfg ~init ~f:(fun acc pair ->
+        exec_node tenv extras pair |> CostDomain.plus acc )
 end
 
+let is_report_suppressed pname =
+  Procname.is_java_access_method pname
+  || Procname.is_java_anonymous_inner_class_method pname
+  || Procname.is_java_autogen_method pname
+
+
 module Check = struct
-  let report_threshold pname summary ~name ~location ~cost CostIssues.{expensive_issue} ~threshold
-      ~is_on_ui_thread =
-    let report_issue_type =
-      L.(debug Analysis Medium) "@\n\n++++++ Checking error type for %a **** @\n" Procname.pp pname ;
-      let is_on_cold_start = ExternalPerfData.in_profiler_data_map pname in
-      expensive_issue ~is_on_cold_start ~is_on_ui_thread
-    in
-    let bigO_str =
-      Format.asprintf ", %a"
-        (BasicCost.pp_degree ~only_bigO:true)
-        (BasicCost.get_degree_with_term cost)
-    in
-    let degree_str = BasicCost.degree_str cost in
-    let message =
-      F.asprintf
-        "%s from the beginning of the function up to this program point is likely above the \
-         acceptable threshold of %d (estimated cost %a%s)"
-        name threshold BasicCost.pp_hum cost degree_str
-    in
-    let cost_trace_elem =
-      let cost_desc =
-        F.asprintf "with estimated cost %a%s%s" BasicCost.pp_hum cost bigO_str degree_str
-      in
-      Errlog.make_trace_element 0 location cost_desc []
-    in
-    Reporting.log_error summary ~loc:location
-      ~ltr:(cost_trace_elem :: BasicCost.polynomial_traces cost)
-      ~extras:(compute_errlog_extras cost) report_issue_type message
-
-
-  let report_top_and_unreachable pname loc summary ~name ~cost
-      CostIssues.{unreachable_issue; infinite_issue} =
+  let report_top_and_unreachable pname proc_desc err_log loc ~name ~cost
+      {CostIssues.unreachable_issue; infinite_issue} =
     let report issue suffix =
       let message = F.asprintf "%s of the function %a %s" name Procname.pp pname suffix in
-      Reporting.log_error ~loc
+      Reporting.log_issue proc_desc err_log ~loc
         ~ltr:(BasicCost.polynomial_traces cost)
-        ~extras:(compute_errlog_extras cost) summary issue message
+        ~extras:(compute_errlog_extras cost) Cost issue message
     in
     if BasicCost.is_top cost then report infinite_issue "cannot be computed"
     else if BasicCost.is_unreachable cost then
@@ -282,26 +196,19 @@ module Check = struct
         "cannot be computed since the program's exit state is never reachable"
 
 
-  let check_and_report ~is_on_ui_thread WorstCaseCost.{costs; reports} proc_desc summary =
+  let check_and_report {InterproceduralAnalysis.proc_desc; err_log} cost =
     let pname = Procdesc.get_proc_name proc_desc in
     let proc_loc = Procdesc.get_loc proc_desc in
-    if not (Procname.is_java_access_method pname) then (
-      CostIssues.CostKindMap.iter2 CostIssues.enabled_cost_map reports
-        ~f:(fun _kind (CostIssues.{name; threshold} as kind_spec) -> function
-        | ThresholdReports.Threshold _ | ThresholdReports.NoReport ->
-            ()
-        | ThresholdReports.ReportOn {location; cost} ->
-            report_threshold pname summary ~name ~location ~cost kind_spec
-              ~threshold:(Option.value_exn threshold) ~is_on_ui_thread ) ;
-      CostIssues.CostKindMap.iter2 CostIssues.enabled_cost_map costs
+    if not (is_report_suppressed pname) then
+      CostIssues.CostKindMap.iter2 CostIssues.enabled_cost_map cost
         ~f:(fun _kind (CostIssues.{name; top_and_unreachable} as issue_spec) cost ->
           if top_and_unreachable then
-            report_top_and_unreachable pname proc_loc summary ~name ~cost issue_spec ) )
+            report_top_and_unreachable pname proc_desc err_log proc_loc ~name ~cost issue_spec )
 end
 
 type bound_map = BasicCost.t Node.IdMap.t
 
-type get_node_nb_exec = Node.id -> BasicCost.t
+type get_node_nb_exec = Node.t -> BasicCost.t
 
 let compute_bound_map node_cfg inferbo_invariant_map control_dep_invariant_map loop_invmap :
     bound_map =
@@ -319,7 +226,7 @@ let compute_get_node_nb_exec node_cfg bound_map : get_node_nb_exec =
       {ConstraintSolver.f}
   in
   let start_node = NodeCFG.start_node node_cfg in
-  NodePrinter.with_session start_node
+  AnalysisCallbacks.html_debug_new_node_session start_node
     ~pp_name:(fun fmt -> F.pp_print_string fmt "cost(constraints)")
     ~f:(fun () ->
       let equalities = ConstraintSolver.collect_constraints ~debug node_cfg in
@@ -327,45 +234,27 @@ let compute_get_node_nb_exec node_cfg bound_map : get_node_nb_exec =
       ConstraintSolver.get_node_nb_exec equalities )
 
 
-let compute_worst_case_cost tenv integer_type_widths get_summary get_formals instr_cfg_wto
-    inferbo_invariant_map get_node_nb_exec =
-  let extras =
-    {inferbo_invariant_map; integer_type_widths; get_node_nb_exec; get_summary; get_formals}
-  in
-  WorstCaseCost.compute tenv extras instr_cfg_wto
+let get_cost_summary ~is_on_ui_thread astate = {CostDomain.post= astate; is_on_ui_thread}
 
-
-let get_cost_summary ~is_on_ui_thread astate =
-  CostDomain.{post= astate.WorstCaseCost.costs; is_on_ui_thread}
-
-
-let report_errors ~is_on_ui_thread proc_desc astate summary =
-  Check.check_and_report ~is_on_ui_thread astate proc_desc summary
-
-
-let checker {Callbacks.exe_env; summary} : Summary.t =
-  let proc_name = Summary.get_proc_name summary in
+let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as analysis_data) =
+  let proc_name = Procdesc.get_proc_name proc_desc in
   let tenv = Exe_env.get_tenv exe_env proc_name in
   let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
-  let proc_desc = Summary.get_proc_desc summary in
   let inferbo_invariant_map =
-    BufferOverrunAnalysis.cached_compute_invariant_map summary tenv integer_type_widths
+    BufferOverrunAnalysis.cached_compute_invariant_map
+      (InterproceduralAnalysis.bind_payload ~f:snd3 analysis_data)
   in
   let node_cfg = NodeCFG.from_pdesc proc_desc in
   (* computes reaching defs: node -> (var -> node set) *)
-  let reaching_defs_invariant_map = ReachingDefs.compute_invariant_map summary tenv in
+  let reaching_defs_invariant_map = ReachingDefs.compute_invariant_map proc_desc in
   (* collect all prune nodes that occur in loop guards, needed for ControlDepAnalyzer *)
   let control_maps, loop_head_to_loop_nodes = Loop_control.get_loop_control_maps node_cfg in
   (* computes the control dependencies: node -> var set *)
-  let control_dep_invariant_map = Control.compute_invariant_map summary tenv control_maps in
+  let control_dep_invariant_map = Control.compute_invariant_map proc_desc control_maps in
   (* compute loop invariant map for control var analysis *)
   let loop_inv_map =
     let get_callee_purity callee_pname =
-      match Ondemand.analyze_proc_name ~caller_summary:summary callee_pname with
-      | Some {Summary.payloads= {Payloads.purity}} ->
-          purity
-      | _ ->
-          None
+      match analyze_dependency callee_pname with Some (_, (_, _, purity)) -> purity | _ -> None
     in
     LoopInvariant.get_loop_inv_var_map tenv get_callee_purity reaching_defs_invariant_map
       loop_head_to_loop_nodes
@@ -374,24 +263,43 @@ let checker {Callbacks.exe_env; summary} : Summary.t =
   let bound_map =
     compute_bound_map node_cfg inferbo_invariant_map control_dep_invariant_map loop_inv_map
   in
-  let is_on_ui_thread = ConcurrencyModels.runs_on_ui_thread ~attrs_of_pname tenv proc_name in
+  let is_on_ui_thread =
+    (not (Procname.is_objc_method proc_name)) && ConcurrencyModels.runs_on_ui_thread tenv proc_name
+  in
   let get_node_nb_exec = compute_get_node_nb_exec node_cfg bound_map in
   let astate =
-    let get_summary callee_pname = Payload.read ~caller_summary:summary ~callee_pname in
+    let open IOption.Let_syntax in
+    let get_summary_common callee_pname =
+      let+ _, summaries = analyze_dependency callee_pname in
+      summaries
+    in
+    let get_summary callee_pname =
+      let* cost_summary, _inferbo_summary, _ = get_summary_common callee_pname in
+      cost_summary
+    in
+    let inferbo_get_summary callee_pname =
+      let* _cost_summary, inferbo_summary, _ = get_summary_common callee_pname in
+      inferbo_summary
+    in
     let get_formals callee_pname =
-      Ondemand.get_proc_desc callee_pname |> Option.map ~f:Procdesc.get_pvar_formals
+      AnalysisCallbacks.get_proc_desc callee_pname >>| Procdesc.get_pvar_formals
     in
     let instr_cfg = InstrCFG.from_pdesc proc_desc in
-    let instr_cfg_wto = InstrCFG.wto instr_cfg in
-    compute_worst_case_cost tenv integer_type_widths get_summary get_formals instr_cfg_wto
-      inferbo_invariant_map get_node_nb_exec
+    let extras =
+      { inferbo_invariant_map
+      ; inferbo_get_summary
+      ; integer_type_widths
+      ; get_node_nb_exec
+      ; get_summary
+      ; get_formals }
+    in
+    WorstCaseCost.compute tenv extras instr_cfg
   in
   let () =
-    let exit_cost_record = astate.WorstCaseCost.costs in
     L.(debug Analysis Verbose)
       "@\n[COST ANALYSIS] PROCEDURE '%a' |CFG| = %i FINAL COST = %a @\n" Procname.pp proc_name
       (Container.length ~fold:NodeCFG.fold_nodes node_cfg)
-      CostDomain.VariantCostMap.pp exit_cost_record
+      CostDomain.VariantCostMap.pp astate
   in
-  report_errors ~is_on_ui_thread proc_desc astate summary ;
-  Payload.update_summary (get_cost_summary ~is_on_ui_thread astate) summary
+  Check.check_and_report analysis_data astate ;
+  Some (get_cost_summary ~is_on_ui_thread astate)

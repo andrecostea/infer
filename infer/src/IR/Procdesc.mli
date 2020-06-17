@@ -162,6 +162,9 @@ module Node : sig
 
   val get_wto_index : t -> int
 
+  val is_dangling : t -> bool
+  (** Returns true if the node is dangling, i.e. no successors and predecessors *)
+
   val hash : t -> int
   (** Hash function for nodes *)
 
@@ -176,17 +179,17 @@ module Node : sig
   val compute_key : t -> NodeKey.t
 end
 
-module IdMap : PrettyPrintable.PPMap with type key = Node.id
 (** Map with node id keys. *)
+module IdMap : PrettyPrintable.PPMap with type key = Node.id
 
-module NodeHash : Caml.Hashtbl.S with type key = Node.t
 (** Hash table with nodes as keys. *)
+module NodeHash : Caml.Hashtbl.S with type key = Node.t
 
-module NodeMap : Caml.Map.S with type key = Node.t
 (** Map over nodes. *)
+module NodeMap : Caml.Map.S with type key = Node.t
 
-module NodeSet : Caml.Set.S with type elt = Node.t
 (** Set of nodes. *)
+module NodeSet : Caml.Set.S with type elt = Node.t
 
 (** procedure descriptions *)
 
@@ -268,6 +271,15 @@ val replace_instrs : t -> f:(Node.t -> Sil.instr -> Sil.instr) -> bool
 (** Map and replace the instructions to be executed. Returns true if at least one substitution
     occured. *)
 
+val replace_instrs_using_context :
+     t
+  -> f:(Node.t -> 'a -> Sil.instr -> Sil.instr)
+  -> update_context:('a -> Sil.instr -> 'a)
+  -> context_at_node:(Node.t -> 'a)
+  -> bool
+(** Map and replace the instructions to be executed using a context that we built with previous
+    instructions in the node. Returns true if at least one substitution occured. *)
+
 val replace_instrs_by : t -> f:(Node.t -> Sil.instr -> Sil.instr array) -> bool
 (** Like [replace_instrs], but slower, and each instruction may be replaced by 0, 1, or more
     instructions. *)
@@ -310,8 +322,8 @@ val is_captured_var : t -> Var.t -> bool
 
 val has_modify_in_block_attr : t -> Pvar.t -> bool
 
-module SQLite : SqliteUtils.Data with type t = t option
 (** per-procedure CFGs are stored in the SQLite "procedures" table as NULL if the procedure has no
     CFG *)
+module SQLite : SqliteUtils.Data with type t = t option
 
 val load : Procname.t -> t option

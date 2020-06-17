@@ -7,4 +7,4 @@
 
 open! IStd
 
-val callback_check_immutable_cast : Callbacks.proc_callback_t
+val analyze : IntraproceduralAnalysis.t -> NullsafeSummary.t option

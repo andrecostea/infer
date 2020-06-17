@@ -9,14 +9,17 @@ open! IStd
 open PulseBasicInterface
 open PulseDomainInterface
 
-type t = PulseAbductiveDomain.t
+type t = AbductiveDomain.t
 
-type 'a access_result = ('a, Diagnostic.t) result
+type 'a access_result = ('a, Diagnostic.t * t) result
 
-val ok_continue : t -> (PulseExecutionState.exec_state list, 'a) result
+val ok_continue : t -> (ExecutionDomain.t list, 'a) result
+
+val check_addr_access : Location.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
+(** Check that the [address] is not known to be invalid *)
 
 module Closures : sig
-  val check_captured_addresses : Location.t -> AbstractValue.t -> t -> (t, Diagnostic.t) result
+  val check_captured_addresses : Location.t -> AbstractValue.t -> t -> (t, Diagnostic.t * t) result
   (** assert the validity of the addresses captured by the lambda *)
 end
 
@@ -27,13 +30,7 @@ val eval : Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) 
     Return an error state if it traverses some known invalid address or if the end destination is
     known to be invalid. *)
 
-val prune :
-     is_then_branch:bool
-  -> Sil.if_kind
-  -> Location.t
-  -> condition:Exp.t
-  -> t
-  -> (t * bool) access_result
+val prune : Location.t -> condition:Exp.t -> t -> t access_result
 
 val eval_deref : Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) access_result
 (** Like [eval] but evaluates [*exp]. *)
@@ -46,17 +43,6 @@ val eval_access :
   -> (t * (AbstractValue.t * ValueHistory.t)) access_result
 (** Like [eval] but starts from an address instead of an expression, checks that it is valid, and if
     so dereferences it according to the access. *)
-
-type operand = LiteralOperand of IntLit.t | AbstractValueOperand of AbstractValue.t
-
-val eval_binop :
-     Location.t
-  -> Binop.t
-  -> operand
-  -> operand
-  -> ValueHistory.t
-  -> t
-  -> t * (AbstractValue.t * ValueHistory.t)
 
 val havoc_id : Ident.t -> ValueHistory.t -> t -> t
 
@@ -72,6 +58,24 @@ val realloc_pvar : Pvar.t -> Location.t -> t -> t
 
 val write_id : Ident.t -> AbstractValue.t * ValueHistory.t -> t -> t
 
+val write_field :
+     Location.t
+  -> ref:AbstractValue.t * ValueHistory.t
+  -> Fieldname.t
+  -> obj:AbstractValue.t * ValueHistory.t
+  -> t
+  -> t access_result
+(** write the edge [ref --.field--> obj] *)
+
+val write_arr_index :
+     Location.t
+  -> ref:AbstractValue.t * ValueHistory.t
+  -> index:AbstractValue.t
+  -> obj:AbstractValue.t * ValueHistory.t
+  -> t
+  -> t access_result
+(** write the edge [ref\[index\]--> obj] *)
+
 val write_deref :
      Location.t
   -> ref:AbstractValue.t * ValueHistory.t
@@ -86,9 +90,18 @@ val invalidate :
 
 val allocate : Procname.t -> Location.t -> AbstractValue.t * ValueHistory.t -> t -> t
 
-val invalidate_deref :
-  Location.t -> Invalidation.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
-(** record that what the address points to is invalid *)
+val add_dynamic_type : Typ.Name.t -> AbstractValue.t -> t -> t
+
+val remove_allocation_attr : AbstractValue.t -> t -> t
+
+val invalidate_access :
+     Location.t
+  -> Invalidation.t
+  -> AbstractValue.t * ValueHistory.t
+  -> BaseMemory.Access.t
+  -> t
+  -> t access_result
+(** record that what the address points via the access to is invalid *)
 
 val invalidate_array_elements :
   Location.t -> Invalidation.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
@@ -101,20 +114,24 @@ val shallow_copy :
   -> (t * (AbstractValue.t * ValueHistory.t)) access_result
 (** returns the address of a new cell with the same edges as the original *)
 
+val get_dynamic_type_unreachable_values : Var.t list -> t -> (Var.t * Typ.Name.t) list
+(** Given a list of variables, computes the unreachable values if the variables were removed from
+    the stack, then return the dynamic types of those values if they are available *)
+
 val remove_vars : Var.t list -> Location.t -> t -> t access_result
 
 val check_address_escape :
   Location.t -> Procdesc.t -> AbstractValue.t -> ValueHistory.t -> t -> t access_result
 
 val call :
-     caller_summary:Summary.t
+     callee_data:(Procdesc.t * PulseSummary.t) option
   -> Location.t
   -> Procname.t
   -> ret:Ident.t * Typ.t
   -> actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
   -> formals_opt:(Pvar.t * Typ.t) list option
   -> t
-  -> PulseExecutionState.t list access_result
+  -> ExecutionDomain.t list access_result
 (** perform an interprocedural call: apply the summary for the call proc name passed as argument if
     it exists *)
 

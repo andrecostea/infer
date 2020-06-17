@@ -13,10 +13,6 @@ open! IStd
 val remove_constant_string_class : Tenv.t -> 'a Prop.t -> Prop.normal Prop.t
 (** Remove constant string or class from a prop *)
 
-val check_attr_dealloc_mismatch : PredSymb.t -> PredSymb.t -> unit
-(** Check if the attribute change is a mismatch between a kind of allocation and a different kind of
-    deallocation *)
-
 val find_dereference_without_null_check_in_sexp :
   Predicates.strexp -> (int * PredSymb.path_pos) option
 (** Check whether a sexp contains a dereference without null check, and return the line number and
@@ -36,18 +32,14 @@ val lookup_custom_errors : 'a Prop.t -> string option
 (** search in prop contains an error state *)
 
 val exe_function_call :
-     Exe_env.t
-  -> Summary.t
-  -> Tenv.t
-  -> Ident.t
-  -> Procdesc.t
-  -> Procname.t
+     BiabductionSummary.t InterproceduralAnalysis.t
+  -> callee_attributes:ProcAttributes.t
+  -> callee_pname:Procname.t
+  -> callee_summary:BiabductionSummary.t
+  -> ret_id:Ident.t
   -> Location.t
-  -> (Exp.t * Typ.t) list
+  -> actuals:(Exp.t * Typ.t) list
   -> Prop.normal Prop.t
   -> Paths.Path.t
   -> (Prop.normal Prop.t * Paths.Path.t) list
 (** Execute the function call and return the list of results with return value *)
-
-val get_specs_from_payload : Summary.t -> Prop.normal BiabductionSummary.spec list
-(** Get the specs from the payload of the summary. *)

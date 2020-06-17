@@ -84,6 +84,11 @@ class PurityModeled {
     list.set(0, "e");
   }
 
+  void call_set_impure(ArrayList<String> list) {
+    list_set_impure(list);
+    list_set_impure(list);
+  }
+
   // Pulse can only widen a fixed number of times, hence it thinks
   // that the exit of the loop never reaches and results in empty
   // post.
@@ -154,6 +159,12 @@ class PurityModeled {
     }
   }
 
+  String add_impure(ArrayList<Integer> list) {
+    Integer el = list.get(0);
+    list.add(4);
+    return el.toString();
+  }
+
   void append_impure(StringBuilder strBuilder) {
     strBuilder.append("JavaGuru");
   }
@@ -163,10 +174,52 @@ class PurityModeled {
     strBuilder.append("JavaGuru");
   }
 
-  // Our model of Iterator.next is wrong. It should be modeled as
-  // impure.
-  Integer next_impure_FN(Iterator<Integer> it) {
+  Integer next_impure(Iterator<Integer> it) {
     return it.next();
+  }
+
+  String remove_iterator_impure(Iterator<Integer> listIterator) {
+    Integer f = listIterator.next();
+    listIterator.remove();
+    return f.toString();
+  }
+
+  String remove_fresh_impure(ArrayList<Integer> list) {
+    Iterator<Integer> listIterator = list.iterator();
+    Integer f = listIterator.next();
+    listIterator.remove();
+    return f.toString();
+  }
+
+  void remove_impure_mult(ArrayList<Integer> list) {
+    String s1 = remove_fresh_impure(list);
+    String s2 = remove_fresh_impure(list);
+  }
+
+  public static void remove_all_impure(ArrayList<Integer> list) {
+    for (Iterator<Integer> iter = list.iterator(); iter.hasNext(); ) {
+      Integer entry = iter.next();
+      iter.remove();
+      System.out.println(entry.toString());
+    }
+  }
+
+  void nested_remove_impure(ArrayList<ArrayList<Integer>> list) {
+    Iterator<ArrayList<Integer>> listIterator = list.iterator();
+    while (listIterator.hasNext()) {
+      ArrayList<Integer> inner_list = listIterator.next();
+      Iterator<Integer> innerListIterator = inner_list.iterator();
+      while (innerListIterator.hasNext()) {
+        Integer el = innerListIterator.next();
+        innerListIterator.remove();
+      }
+    }
+  }
+
+  void remove_all_directly_impure(ArrayList<Integer> list) {
+    for (Integer el : list) {
+      list.remove(el); // bad, must remove via iterator.
+    }
   }
 
   public static final String toString_delete_pure(Object args) {

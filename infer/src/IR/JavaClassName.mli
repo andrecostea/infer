@@ -11,6 +11,8 @@ type t [@@deriving compare, equal]
 
 module Map : Caml.Map.S with type key = t
 
+module Set : Caml.Set.S with type elt = t
+
 val make : package:string option -> classname:string -> t
 
 val from_string : string -> t
@@ -29,16 +31,20 @@ val classname : t -> string
 val is_external_via_config : t -> bool
 (** Considered external based on config flags. *)
 
+val get_outer_class_name : t -> t option
+(** If this is an inner class, return the closest outer, e.g. A$B for A$B$C. None if the class is
+    outermost *)
+
 val is_anonymous_inner_class_name : t -> bool
-(** True if it is anonymous Java class:
-    https://docs.oracle.com/javase/tutorial/java/javaOO/anonymousclasses.html *)
+(** True if it is either "classic" anonymous Java class:
+    https://docs.oracle.com/javase/tutorial/java/javaOO/anonymousclasses.html, or a synthetic Java
+    class corresponding to a lambda expression. *)
 
 val get_user_defined_class_if_anonymous_inner : t -> t option
-(** If the current class is anonymous ([is_anonymous_inner_class_name] is true), Return the
+(** If the current class is anonymous ([is_anonymous_inner_class_name] is true), return the
     corresponding user defined (not anonymous) class this anonymous class belongs to.
 
-    In general case, BOTH anonymous classes and user-defined classes can be nested, so the most
-    general example looks like So in general case anonymous class name looks something like
-    Class$NestedClass$1$17$5. This function should return Class$NestedClass for this case.
+    In general case, BOTH anonymous classes and user-defined classes can be nested:
+    SomeClass$NestedClass$1$17$5. In this example, we should return SomeClass$NestedClass.
 
     If this is not an anonymous class, returns [None]. *)

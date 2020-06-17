@@ -26,7 +26,7 @@ let attributes_in_same_category attr1 attr2 =
 
 
 (** Replace an attribute associated to the expression *)
-let add_or_replace_check_changed tenv check_attribute_change prop atom =
+let add_or_replace_check_changed tenv prop atom =
   match atom with
   | Predicates.Apred (att0, (_ :: _ as exps0)) | Anpred (att0, (_ :: _ as exps0)) ->
       let pairs = List.map ~f:(fun e -> (e, Prop.exp_normalize_prop tenv prop e)) exps0 in
@@ -35,7 +35,7 @@ let add_or_replace_check_changed tenv check_attribute_change prop atom =
       let atom_map = function
         | (Predicates.Apred (att, exp :: _) | Anpred (att, exp :: _))
           when Exp.equal nexp exp && attributes_in_same_category att att0 ->
-            check_attribute_change att att0 ; atom
+            atom
         | atom' ->
             atom'
       in
@@ -49,15 +49,15 @@ let add_or_replace_check_changed tenv check_attribute_change prop atom =
 
 let add_or_replace tenv prop atom =
   (* wrapper for the most common case: do nothing *)
-  let check_attr_changed _ _ = () in
-  add_or_replace_check_changed tenv check_attr_changed prop atom
+  add_or_replace_check_changed tenv prop atom
 
 
 (** Get all the attributes of the prop *)
 let get_all (prop : 'a Prop.t) =
   let res = ref [] in
   let do_atom a = if is_pred a then res := a :: !res in
-  List.iter ~f:do_atom prop.pi ; List.rev !res
+  List.iter ~f:do_atom prop.pi ;
+  List.rev !res
 
 
 (** Get the attribute associated to the expression, if any *)
@@ -258,7 +258,8 @@ let find_arithmetic_problem tenv proc_node_session prop exp =
     | Exp.Lfield (e, _, _) ->
         walk e
     | Exp.Lindex (e1, e2) ->
-        walk e1 ; walk e2
+        walk e1 ;
+        walk e2
     | Exp.Sizeof {dynamic_length= None} ->
         ()
     | Exp.Sizeof {dynamic_length= Some len} ->

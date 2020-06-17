@@ -91,11 +91,16 @@ let () =
       ignore (Gc.create_alarm SymOp.check_wallclock_alarm)
 
 
-let unwind () = unset_alarm () ; SymOp.unset_alarm () ; GlobalState.pop ()
+let unwind () =
+  unset_alarm () ;
+  SymOp.unset_alarm () ;
+  GlobalState.pop ()
+
 
 let suspend_existing_timeout ~keep_symop_total =
   let current_status = get_current_status ~keep_symop_total in
-  unset_alarm () ; GlobalState.push current_status
+  unset_alarm () ;
+  GlobalState.push current_status
 
 
 let resume_previous_timeout () =
@@ -117,6 +122,6 @@ let exe_timeout f x =
         None )
       ~finally:resume_previous_timeout
   with SymOp.Analysis_failure_exe kind ->
-    let loc = State.get_loc () |> Option.value ~default:Location.dummy in
+    let loc = AnalysisState.get_loc () |> Option.value ~default:Location.dummy in
     Errdesc.warning_err loc "TIMEOUT: %a@." SymOp.pp_failure_kind kind ;
     Some kind

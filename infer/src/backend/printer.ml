@@ -14,56 +14,6 @@ module Hashtbl = Caml.Hashtbl
 module L = Logging
 module F = Format
 
-(** Module to read specific lines from files. The data from any file will stay in memory until the
-    handle is collected by the gc. *)
-module LineReader = struct
-  (** Map a file name to an array of string, one for each line in the file. *)
-  type t = (SourceFile.t, string array) Hashtbl.t
-
-  let create () = Hashtbl.create 1
-
-  let read_file fname =
-    let cin = In_channel.create fname in
-    let lines = ref [] in
-    try
-      while true do
-        let line_raw = In_channel.input_line_exn cin in
-        let line =
-          let len = String.length line_raw in
-          if len > 0 && Char.equal line_raw.[len - 1] '\r' then
-            String.sub line_raw ~pos:0 ~len:(len - 1)
-          else line_raw
-        in
-        lines := line :: !lines
-      done ;
-      assert false (* execution never reaches here *)
-    with End_of_file -> In_channel.close cin ; Array.of_list_rev !lines
-
-
-  let file_data (hash : t) fname =
-    try Some (Hashtbl.find hash fname)
-    with Caml.Not_found -> (
-      try
-        let lines_arr = read_file (SourceFile.to_abs_path fname) in
-        Hashtbl.add hash fname lines_arr ; Some lines_arr
-      with exn when SymOp.exn_not_failure exn -> None )
-
-
-  let from_file_linenum hash fname linenum =
-    match file_data hash fname with
-    | Some lines_arr when linenum > 0 && linenum <= Array.length lines_arr ->
-        Some lines_arr.(linenum - 1)
-    | _ ->
-        None
-
-
-  let from_loc hash loc = from_file_linenum hash loc.Location.file loc.Location.line
-
-  let iter hash fname ~f =
-    file_data hash fname
-    |> Option.iter ~f:(Array.iteri ~f:(fun linenum line -> f (linenum + 1) line))
-end
-
 (** Current formatter for the html output *)
 let curr_html_formatter = ref F.std_formatter
 
@@ -204,7 +154,7 @@ end = struct
     let err_per_line = Hashtbl.create 17 in
     let add_err (key : Errlog.err_key) (err_data : Errlog.err_data) =
       let err_str =
-        F.asprintf "%s %a" key.err_name.IssueType.unique_id Localise.pp_error_desc key.err_desc
+        F.asprintf "%s %a" key.issue_type.unique_id Localise.pp_error_desc key.err_desc
       in
       try
         let set = Hashtbl.find err_per_line err_data.loc.Location.line in
@@ -212,7 +162,8 @@ end = struct
       with Caml.Not_found ->
         Hashtbl.add err_per_line err_data.loc.Location.line (String.Set.singleton err_str)
     in
-    Errlog.iter add_err err_log ; err_per_line
+    Errlog.iter add_err err_log ;
+    err_per_line
 
 
   (** Create error message for html file *)
@@ -273,7 +224,7 @@ end = struct
           () ) ;
       F.fprintf fmt "</td></tr>@\n"
     in
-    LineReader.iter linereader filename ~f:print_one_line ;
+    LineReader.iteri linereader filename ~f:print_one_line ;
     F.fprintf fmt "</table>@\n" ;
     Errlog.pp_html filename [fname_encoding] fmt global_err_log ;
     Io_infer.Html.close (fd, fmt)
@@ -337,7 +288,8 @@ end = struct
     fun node ->
       let file = (Procdesc.Node.get_loc node).Location.file in
       if not (Hashtbl.mem written_files file) then (
-        write_all_html_files file ; Hashtbl.add written_files file () )
+        write_all_html_files file ;
+        Hashtbl.add written_files file () )
 end
 
 (* =============== Printing functions =============== *)

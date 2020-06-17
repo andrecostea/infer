@@ -44,7 +44,8 @@ let capture_libs program tenv =
         let fake_source_file = SourceFile.from_abs_path (JFrontend.path_of_cached_classname cn) in
         init_global_state fake_source_file ;
         let cfg = JFrontend.compute_class_icfg fake_source_file program tenv node in
-        store_icfg fake_source_file cfg ; JFrontend.cache_classname cn
+        store_icfg fake_source_file cfg ;
+        JFrontend.cache_classname cn
   in
   JBasics.ClassMap.iter (capture_class tenv) (JClasspath.get_classmap program)
 
@@ -55,8 +56,8 @@ let load_tenv () =
   | None ->
       Tenv.create ()
   | Some _ when Config.biabduction_models_mode ->
-      L.(die InternalError)
-        "Unexpected global tenv file found in '%s' while generating the models" Config.captured_dir
+      L.die InternalError "Unexpected global tenv file found in '%s' while generating the models"
+        (ResultsDir.get_path JavaGlobalTypeEnvironment)
   | Some tenv ->
       tenv
 
@@ -119,7 +120,7 @@ let main load_sources_and_classes =
   | true, true ->
       L.(die UserError) "Not expecting model file when analyzing the models"
   | false, true ->
-      JModels.set_models ~jar_filename:Config.biabduction_models_jar ) ;
+      JModels.load_models ~jar_filename:Config.biabduction_models_jar ) ;
   JBasics.set_permissive true ;
   let JClasspath.{classpath; sources; classes} =
     match load_sources_and_classes with

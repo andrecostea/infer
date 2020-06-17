@@ -9,11 +9,35 @@
 
 open HolKernel boolLib bossLib Parse;
 open arithmeticTheory pred_setTheory;
-open settingsTheory llvmTheory llairTheory;
+open settingsTheory llvmTheory llvm_ssaTheory llairTheory;
 
 new_theory "llvm_to_llair";
 
 numLib.prefer_num ();
+
+(* Record which LLVM instructions the translation is implemented for *)
+Definition is_implemented_def:
+  (is_implemented (Ret _) ⇔ F) ∧
+  (is_implemented (Br _ _ _) ⇔ T) ∧
+  (is_implemented (Invoke _ _ _ _ _ _) ⇔ F) ∧
+  (is_implemented Unreachable ⇔ F) ∧
+  (is_implemented (Exit _) ⇔ T) ∧
+  (is_implemented (Sub _ _ _ _ _ _) ⇔ T) ∧
+  (is_implemented (Extractvalue _ _ _) ⇔ T) ∧
+  (is_implemented (Insertvalue _ _ _ _) ⇔ T) ∧
+  (is_implemented (Alloca _ _ _) ⇔ F) ∧
+  (is_implemented (Load _ _ _) ⇔ T) ∧
+  (is_implemented (Store _ _) ⇔ T) ∧
+  (is_implemented (Gep _ _ _ _) ⇔ F) ∧
+  (is_implemented (Cast _ _ _ _) ⇔ T) ∧
+  (is_implemented (Icmp _ _ _ _ _) ⇔ F) ∧
+  (is_implemented (Call _ _ _ _) ⇔ F) ∧
+  (is_implemented (Cxa_allocate_exn _ _) ⇔ F) ∧
+  (is_implemented (Cxa_throw _ _ _) ⇔ F) ∧
+  (is_implemented (Cxa_begin_catch _ _) ⇔ F) ∧
+  (is_implemented Cxa_end_catch ⇔ F) ∧
+  (is_implemented (Cxa_get_exception_ptr _ _) ⇔ F)
+End
 
 Definition the_def:
   (the None x = x) ∧
@@ -230,25 +254,11 @@ Datatype:
   | Call
 End
 
-(* Convert index lists as for GEP into number lists, for the purpose of
- * calculating types. Everything goes to 0 but for positive integer constants,
- * because those things can't be used to index anything but arrays, and the type
- * for the array contents doesn't depend on the index's value. *)
-Definition idx_to_num_def:
-  (idx_to_num (_, (Constant (IntC _ n))) = Num (ABS n)) ∧
-  (idx_to_num (_, _) = 0)
-End
-
-Definition cidx_to_num_def:
-  (cidx_to_num (IntC _ n) = Num (ABS n)) ∧
-  (cidx_to_num _ = 0)
-End
-
 Definition classify_instr_def:
   (classify_instr (Call _ _ _ _) = Call) ∧
   (classify_instr (Ret _) = Term) ∧
   (classify_instr (Br _ _ _) = Term) ∧
-  (classify_instr (Invoke _ _ _ _ _ _) = Term) ∧
+  (classify_instr (Invoke _ _ _ _ _ _) = Call) ∧
   (classify_instr Unreachable = Term) ∧
   (classify_instr (Exit _) = Term) ∧
   (classify_instr (Load _ _ _) = Non_exp) ∧
@@ -273,9 +283,10 @@ End
 Definition extend_emap_non_exp_def:
   (extend_emap_non_exp emap (Load r t _) = emap |+ (r, Var (translate_reg r t) F)) ∧
   (extend_emap_non_exp emap (Call r t _ _) = emap |+ (r, Var (translate_reg r t) F)) ∧
+  (extend_emap_non_exp emap (Invoke r t _  _ _ _) = emap |+ (r, Var (translate_reg r t) F)) ∧
+  (extend_emap_non_exp emap (Cxa_begin_catch r _) = emap |+ (r, Var (translate_reg r ARB) F)) ∧
   (extend_emap_non_exp emap _ = emap)
 End
-
 
 (* Given a non-empty list of blocks, add an inst to the first one *)
 Definition add_to_first_block_def:

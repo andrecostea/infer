@@ -7,6 +7,7 @@
 open! IStd
 module F = Format
 module L = Logging
+module BoField = BufferOverrunField
 
 module BoundEnd = struct
   type t = LowerBound | UpperBound [@@deriving compare]
@@ -23,85 +24,37 @@ module SymbolPath = struct
 
   let compare_deref_kind _ _ = 0
 
-  type field_typ = Typ.t option
+  type prim =
+    | Pvar of Pvar.t
+    | Deref of deref_kind * partial
+    | Callsite of {ret_typ: Typ.t; cs: CallSite.t; obj_path: partial option [@compare.ignore]}
+  [@@deriving compare]
 
-  let compare_field_typ _ _ = 0
+  and partial = prim BoField.t [@@deriving compare]
 
-  let is_field_depth_beyond_limit =
-    match Config.bo_field_depth_limit with
-    | None ->
-        fun _depth -> false
-    | Some limit ->
-        fun depth -> depth > limit
+  let of_pvar pvar = BoField.Prim (Pvar pvar)
 
+  let of_callsite ?obj_path ~ret_typ cs = BoField.Prim (Callsite {ret_typ; cs; obj_path})
 
-  include (* Enforce invariants on Field and StarField *) (
-    struct
-      type partial =
-        | Pvar of Pvar.t
-        | Deref of deref_kind * partial
-        | Field of {fn: Fieldname.t; prefix: partial; typ: field_typ}
-        | Callsite of {ret_typ: Typ.t; cs: CallSite.t; obj_path: partial option [@compare.ignore]}
-        | StarField of {last_field: Fieldname.t; prefix: partial}
-      [@@deriving compare]
+  let deref ~deref_kind p = BoField.Prim (Deref (deref_kind, p))
 
-      let of_pvar pvar = Pvar pvar
-
-      let of_callsite ?obj_path ~ret_typ cs = Callsite {ret_typ; cs; obj_path}
-
-      let deref ~deref_kind p = Deref (deref_kind, p)
-
-      let star_field p0 fn =
-        let rec aux = function
-          | Pvar _ | Callsite _ ->
-              StarField {last_field= fn; prefix= p0}
-          | Deref (_, p) | Field {prefix= p} ->
-              aux p
-          | StarField {last_field} as p when Fieldname.equal fn last_field ->
-              p
-          | StarField {prefix} ->
-              StarField {last_field= fn; prefix}
-        in
-        aux p0
+  let prim_append_field ?typ p0 fn aux depth = function
+    | Pvar _ | Callsite _ ->
+        BoField.Field {fn; prefix= p0; typ}
+    | Deref (_, p) ->
+        aux ~depth:(depth + 1) p
 
 
-      let field ?typ p0 fn =
-        let rec aux ~depth p =
-          if is_field_depth_beyond_limit depth then star_field p0 fn
-          else
-            match p with
-            | Pvar _ | Callsite _ ->
-                Field {fn; prefix= p0; typ}
-            | Field {fn= fn'} when Fieldname.equal fn fn' ->
-                StarField {last_field= fn; prefix= p0}
-            | Field {prefix= p} | Deref (_, p) ->
-                aux ~depth:(depth + 1) p
-            | StarField {last_field} as p when Fieldname.equal fn last_field ->
-                p
-            | StarField {prefix} ->
-                StarField {last_field= fn; prefix}
-        in
-        aux ~depth:0 p0
-    end :
-      sig
-        type partial = private
-          | Pvar of Pvar.t
-          | Deref of deref_kind * partial
-          | Field of {fn: Fieldname.t; prefix: partial; typ: field_typ}
-          | Callsite of {ret_typ: Typ.t; cs: CallSite.t; obj_path: partial option}
-          | StarField of {last_field: Fieldname.t; prefix: partial}
-        [@@deriving compare]
+  let prim_append_star_field p0 fn aux = function
+    | Pvar _ | Callsite _ ->
+        BoField.StarField {prefix= p0; last_field= fn}
+    | Deref (_, p) ->
+        aux p
 
-        val of_pvar : Pvar.t -> partial
 
-        val of_callsite : ?obj_path:partial -> ret_typ:Typ.t -> CallSite.t -> partial
+  let append_field = BoField.mk_append_field ~prim_append_field ~prim_append_star_field
 
-        val deref : deref_kind:deref_kind -> partial -> partial
-
-        val field : ?typ:Typ.t -> partial -> Fieldname.t -> partial
-
-        val star_field : partial -> Fieldname.t -> partial
-      end )
+  let append_star_field = BoField.mk_append_star_field ~prim_append_star_field
 
   type t =
     | Normal of partial
@@ -122,14 +75,19 @@ module SymbolPath = struct
 
   let modeled p ~is_expensive = Modeled {p; is_expensive}
 
-  let is_this = function Pvar pvar -> Pvar.is_this pvar || Pvar.is_self pvar | _ -> false
+  let is_this = function
+    | BoField.Prim (Pvar pvar) ->
+        Pvar.is_this pvar || Pvar.is_self pvar
+    | _ ->
+        false
+
 
   let rec get_pvar = function
-    | Pvar pvar ->
+    | BoField.Prim (Pvar pvar) ->
         Some pvar
-    | Deref (_, partial) | Field {prefix= partial} | StarField {prefix= partial} ->
+    | BoField.(Prim (Deref (_, partial)) | Field {prefix= partial} | StarField {prefix= partial}) ->
         get_pvar partial
-    | Callsite _ ->
+    | BoField.Prim (Callsite _) ->
         None
 
 
@@ -139,27 +97,27 @@ module SymbolPath = struct
 
 
   let rec pp_partial_paren ~paren fmt = function
-    | Pvar pvar ->
+    | BoField.Prim (Pvar pvar) ->
         if Config.bo_debug >= 3 then Pvar.pp_value fmt pvar else Pvar.pp_value_non_verbose fmt pvar
-    | Deref (Deref_JavaPointer, p) when Config.bo_debug < 3 ->
+    | BoField.Prim (Deref (Deref_JavaPointer, p)) when Config.bo_debug < 3 ->
         pp_partial_paren ~paren fmt p
-    | Deref (Deref_ArrayIndex, p) ->
+    | BoField.Prim (Deref (Deref_ArrayIndex, p)) ->
         F.fprintf fmt "%a[*]" (pp_partial_paren ~paren:true) p
-    | Deref ((Deref_COneValuePointer | Deref_CPointer | Deref_JavaPointer), p) ->
+    | BoField.Prim (Deref ((Deref_COneValuePointer | Deref_CPointer | Deref_JavaPointer), p)) ->
         pp_pointer ~paren fmt p
-    | Field {fn; prefix= Deref ((Deref_COneValuePointer | Deref_CPointer), p)} ->
+    | BoField.Field {fn; prefix= Prim (Deref ((Deref_COneValuePointer | Deref_CPointer), p))} ->
         BufferOverrunField.pp ~pp_lhs:(pp_partial_paren ~paren:true) ~sep:"->" fmt p fn
-    | Field {fn; prefix= p} ->
+    | BoField.Field {fn; prefix= p} ->
         BufferOverrunField.pp ~pp_lhs:(pp_partial_paren ~paren:true) ~sep:"." fmt p fn
-    | Callsite {cs; obj_path= Some obj_path} ->
+    | BoField.Prim (Callsite {cs; obj_path= Some obj_path}) ->
         if paren then F.pp_print_string fmt "(" ;
         F.fprintf fmt "%a.%a" (pp_partial_paren ~paren:false) obj_path
           (Procname.pp_simplified_string ~withclass:false)
           (CallSite.pname cs) ;
         if paren then F.pp_print_string fmt ")"
-    | Callsite {cs; obj_path= None} ->
+    | BoField.Prim (Callsite {cs; obj_path= None}) ->
         Procname.pp_simplified_string ~withclass:true fmt (CallSite.pname cs)
-    | StarField {last_field; prefix} ->
+    | BoField.StarField {last_field; prefix} ->
         BufferOverrunField.pp ~pp_lhs:(pp_star ~paren:true) ~sep:"." fmt prefix last_field
 
 
@@ -169,7 +127,10 @@ module SymbolPath = struct
     if paren then F.fprintf fmt ")"
 
 
-  and pp_star ~paren fmt p = pp_partial_paren ~paren fmt p ; F.pp_print_string fmt ".*"
+  and pp_star ~paren fmt p =
+    pp_partial_paren ~paren fmt p ;
+    F.pp_print_string fmt ".*"
+
 
   let pp_partial = pp_partial_paren ~paren:false
 
@@ -197,54 +158,55 @@ module SymbolPath = struct
 
   let rec represents_multiple_values = function
     (* TODO depending on the result, the call might represent multiple values *)
-    | Callsite _ | Pvar _ ->
+    | BoField.Prim (Callsite _ | Pvar _) ->
         false
-    | Deref (Deref_ArrayIndex, _) | StarField _ ->
+    | BoField.Prim (Deref (Deref_ArrayIndex, _)) | BoField.StarField _ ->
         true
-    | Deref (Deref_CPointer, p)
+    | BoField.Prim (Deref (Deref_CPointer, p))
     (* Deref_CPointer is unsound here but avoids many FPs for non-array pointers *)
-    | Deref ((Deref_COneValuePointer | Deref_JavaPointer), p)
-    | Field {prefix= p} ->
+    | BoField.Prim (Deref ((Deref_COneValuePointer | Deref_JavaPointer), p))
+    | BoField.Field {prefix= p} ->
         represents_multiple_values p
 
 
   let rec represents_multiple_values_sound = function
-    | Callsite _ | StarField _ ->
+    | BoField.Prim (Callsite _) | BoField.StarField _ ->
         true
-    | Pvar _ ->
+    | BoField.Prim (Pvar _) ->
         false
-    | Deref ((Deref_ArrayIndex | Deref_CPointer), _) ->
+    | BoField.Prim (Deref ((Deref_ArrayIndex | Deref_CPointer), _)) ->
         true
-    | Deref ((Deref_COneValuePointer | Deref_JavaPointer), p) | Field {prefix= p} ->
+    | BoField.(Prim (Deref ((Deref_COneValuePointer | Deref_JavaPointer), p)) | Field {prefix= p})
+      ->
         represents_multiple_values_sound p
 
 
   let rec represents_callsite_sound_partial = function
-    | Callsite _ ->
+    | BoField.Prim (Callsite _) ->
         true
-    | Pvar _ ->
+    | BoField.Prim (Pvar _) ->
         false
-    | Deref (_, p) | Field {prefix= p} | StarField {prefix= p} ->
+    | BoField.(Prim (Deref (_, p)) | Field {prefix= p} | StarField {prefix= p}) ->
         represents_callsite_sound_partial p
 
 
   let rec exists_pvar_partial ~f = function
-    | Pvar pvar ->
+    | BoField.Prim (Pvar pvar) ->
         f pvar
-    | Deref (_, p) | Field {prefix= p} | StarField {prefix= p} ->
+    | BoField.(Prim (Deref (_, p)) | Field {prefix= p} | StarField {prefix= p}) ->
         exists_pvar_partial ~f p
-    | Callsite _ ->
+    | BoField.Prim (Callsite _) ->
         false
 
 
   let rec exists_str_partial ~f = function
-    | Pvar pvar ->
+    | BoField.Prim (Pvar pvar) ->
         f (Pvar.to_string pvar)
-    | Deref (_, x) ->
+    | BoField.Prim (Deref (_, x)) ->
         exists_str_partial ~f x
-    | Field {fn= fld; prefix= x} | StarField {last_field= fld; prefix= x} ->
+    | BoField.(Field {fn= fld; prefix= x} | StarField {last_field= fld; prefix= x}) ->
         f (Fieldname.to_string fld) || exists_str_partial ~f x
-    | Callsite _ ->
+    | BoField.Prim (Callsite _) ->
         false
 
 
@@ -261,18 +223,18 @@ module SymbolPath = struct
 
 
   let is_cpp_vector_elem = function
-    | Field {fn} ->
+    | BoField.Field {fn} ->
         BufferOverrunField.is_cpp_vector_elem fn
     | _ ->
         false
 
 
   let rec is_global_partial = function
-    | Pvar pvar ->
+    | BoField.Prim (Pvar pvar) ->
         Pvar.is_global pvar
-    | Deref (_, x) | Field {prefix= x} | StarField {prefix= x} ->
+    | BoField.(Prim (Deref (_, x)) | Field {prefix= x} | StarField {prefix= x}) ->
         is_global_partial x
-    | Callsite _ ->
+    | BoField.Prim (Callsite _) ->
         false
 
 
@@ -287,7 +249,7 @@ module Symbol = struct
   (* NOTE: non_int represents the symbols that are not integer type,
      so that their ranges are not used in the cost checker. *)
   type t =
-    | PulseValue of PulseAbstractValue.t
+    | ForeignVariable of {id: int}
     | OneValue of {unsigned: extra_bool; non_int: extra_bool; path: SymbolPath.t}
     | BoundEnd of
         {unsigned: extra_bool; non_int: extra_bool; path: SymbolPath.t; bound_end: BoundEnd.t}
@@ -296,15 +258,15 @@ module Symbol = struct
   let pp : F.formatter -> t -> unit =
    fun fmt s ->
     match s with
-    | PulseValue v ->
-        PulseAbstractValue.pp fmt v
+    | ForeignVariable {id} ->
+        F.fprintf fmt "v%d" id
     | OneValue {unsigned; non_int; path} | BoundEnd {unsigned; non_int; path} ->
         SymbolPath.pp fmt path ;
         ( if Config.developer_mode then
           match s with
           | BoundEnd {bound_end} ->
               Format.fprintf fmt ".%s" (BoundEnd.to_string bound_end)
-          | PulseValue _ | OneValue _ ->
+          | ForeignVariable _ | OneValue _ ->
               () ) ;
         if Config.bo_debug > 1 then
           F.fprintf fmt "(%c%s)" (if unsigned then 'u' else 's') (if non_int then "n" else "")
@@ -312,12 +274,12 @@ module Symbol = struct
 
   let compare s1 s2 =
     match (s1, s2) with
-    | PulseValue _, (OneValue _ | BoundEnd _) ->
+    | ForeignVariable _, (OneValue _ | BoundEnd _) ->
         -1
-    | (OneValue _ | BoundEnd _), PulseValue _ ->
+    | (OneValue _ | BoundEnd _), ForeignVariable _ ->
         1
-    | PulseValue x, PulseValue y ->
-        PulseAbstractValue.compare x y
+    | ForeignVariable {id= x}, ForeignVariable {id= y} ->
+        compare_int x y
     | OneValue _, BoundEnd _ ->
         -1
     | BoundEnd _, OneValue _ ->
@@ -326,7 +288,8 @@ module Symbol = struct
     | BoundEnd {unsigned= unsigned1}, BoundEnd {unsigned= unsigned2} ->
         let r = compare s1 s2 in
         if Int.equal r 0 && not (Bool.equal unsigned1 unsigned2) then (
-          L.internal_error "values are equal but their signs are different: %a <> %a" pp s1 pp s2 ;
+          L.d_printfln_escaped "values are equal but their signs are different: %a <> %a" pp s1 pp
+            s2 ;
           Bool.compare unsigned1 unsigned2 )
         else r
 
@@ -337,7 +300,8 @@ module Symbol = struct
 
   let paths_equal s1 s2 =
     match (s1, s2) with
-    | PulseValue _, _ | _, PulseValue _ | OneValue _, BoundEnd _ | BoundEnd _, OneValue _ ->
+    | ForeignVariable _, _ | _, ForeignVariable _ | OneValue _, BoundEnd _ | BoundEnd _, OneValue _
+      ->
         false
     | OneValue {path= path1}, OneValue {path= path2} | BoundEnd {path= path1}, BoundEnd {path= path2}
       ->
@@ -354,46 +318,51 @@ module Symbol = struct
    fun bound_end ~unsigned ?(non_int = false) path -> BoundEnd {unsigned; non_int; path; bound_end}
 
 
-  let of_pulse_value v = PulseValue v
-
   let pp_mark ~markup = if markup then MarkupFormatter.wrap_monospaced pp else pp
 
   let is_unsigned : t -> bool = function
-    | PulseValue _ ->
+    | ForeignVariable _ ->
         false
     | OneValue {unsigned} | BoundEnd {unsigned} ->
         unsigned
 
 
   let is_non_int : t -> bool = function
-    | PulseValue _ ->
+    | ForeignVariable _ ->
         false
     | OneValue {non_int} | BoundEnd {non_int} ->
         non_int
 
 
   let is_global : t -> bool = function
-    | PulseValue _ ->
+    | ForeignVariable _ ->
         false
     | OneValue {path} | BoundEnd {path} ->
         SymbolPath.is_global path
 
 
-  let get_pulse_value_exn : t -> PulseAbstractValue.t = function
-    | PulseValue v ->
-        v
+  let of_foreign_id id = ForeignVariable {id}
+
+  let get_foreign_id_exn : t -> int = function
+    | ForeignVariable {id} ->
+        id
     | OneValue _ | BoundEnd _ ->
         assert false
 
 
   (* This should be called on non-pulse bound as of now. *)
-  let path = function PulseValue _ -> assert false | OneValue {path} | BoundEnd {path} -> path
+  let path = function
+    | ForeignVariable _ ->
+        assert false
+    | OneValue {path} | BoundEnd {path} ->
+        path
+
 
   (* NOTE: This may not be satisfied in the cost checker for simplifying its results. *)
   let check_bound_end s be =
     if Config.bo_debug >= 3 then
       match s with
-      | PulseValue _ | OneValue _ ->
+      | ForeignVariable _ | OneValue _ ->
           ()
       | BoundEnd {bound_end} ->
           if not (BoundEnd.equal be bound_end) then
@@ -403,7 +372,7 @@ module Symbol = struct
 
 
   let exists_str ~f = function
-    | PulseValue _ ->
+    | ForeignVariable _ ->
         false
     | OneValue {path} | BoundEnd {path} ->
         SymbolPath.exists_str ~f path

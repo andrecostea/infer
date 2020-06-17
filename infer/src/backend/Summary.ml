@@ -137,8 +137,7 @@ module OnDisk = struct
 
   (** Return the path to the .specs file for the given procedure in the current results directory *)
   let specs_filename_of_procname pname =
-    DB.Results_dir.path_to_filename DB.Results_dir.Abs_root
-      [Config.specs_dir_name; specs_filename pname]
+    DB.filename_from_string (ResultsDir.get_path Specs ^/ specs_filename pname)
 
 
   (** paths to the .specs file for the given procedure in the models folder *)
@@ -158,28 +157,17 @@ module OnDisk = struct
     opt
 
 
-  let load_biabduction_model proc_name =
-    if BiabductionModels.mem proc_name then load_from_file (specs_models_filename proc_name)
-    else None
-
-
   (** Load procedure summary for the given procedure name and update spec table *)
-  let load_summary_to_spec_table =
-    let load_summary_ziplibs zip_specs_filename =
-      let zip_specs_path = Filename.concat Config.specs_dir_name zip_specs_filename in
-      ZipLib.load summary_serializer zip_specs_path
+  let load_summary_to_spec_table proc_name =
+    let summ_opt =
+      match load_from_file (specs_filename_of_procname proc_name) with
+      | None when BiabductionModels.mem proc_name ->
+          load_from_file (specs_models_filename proc_name)
+      | summ_opt ->
+          summ_opt
     in
-    let or_from f_load f_filenames proc_name summ_opt =
-      match summ_opt with Some _ -> summ_opt | None -> f_load (f_filenames proc_name)
-    in
-    fun proc_name ->
-      let summ_opt =
-        load_from_file (specs_filename_of_procname proc_name)
-        |> or_from load_biabduction_model Fn.id proc_name
-        |> or_from load_summary_ziplibs specs_filename proc_name
-      in
-      Option.iter ~f:(add proc_name) summ_opt ;
-      summ_opt
+    Option.iter ~f:(add proc_name) summ_opt ;
+    summ_opt
 
 
   let get proc_name =
@@ -190,13 +178,6 @@ module OnDisk = struct
     | exception Caml.Not_found ->
         BackendStats.incr_summary_cache_misses () ;
         load_summary_to_spec_table proc_name
-
-
-  (** Check if the procedure is from a library: It's not defined, and there is no spec file for it. *)
-  let proc_is_library proc_attributes =
-    if not proc_attributes.ProcAttributes.is_defined then
-      match get proc_attributes.ProcAttributes.proc_name with None -> true | Some _ -> false
-    else false
 
 
   (** Try to find the attributes for a defined proc. First look at specs (to get attributes computed
@@ -232,14 +213,6 @@ module OnDisk = struct
     in
     Procname.Hash.replace cache (Procdesc.get_proc_name proc_desc) summary ;
     summary
-
-
-  let dummy =
-    let dummy_attributes =
-      ProcAttributes.default (SourceFile.invalid __FILE__) Procname.empty_block
-    in
-    let dummy_proc_desc = Procdesc.from_proc_attributes dummy_attributes in
-    reset dummy_proc_desc
 
 
   let reset_all ~filter () =

@@ -101,6 +101,10 @@ let implements_google class_name = implements ("com.google." ^ class_name)
 
 let implements_android class_name = implements ("android." ^ class_name)
 
+let implements_infer_annotation class_name =
+  implements ("com.facebook.infer.annotation." ^ class_name)
+
+
 let implements_jackson class_name = implements ("com.fasterxml.jackson." ^ class_name)
 
 let implements_org_json class_name = implements ("org.json." ^ class_name)
@@ -296,26 +300,6 @@ let method_is_initializer (tenv : Tenv.t) (proc_attributes : ProcAttributes.t) :
       false
 
 
-(** Get the vararg values by looking for array assignments to the pvar. *)
-let java_get_vararg_values node pvar idenv =
-  let values_of_instr acc = function
-    | Sil.Store {e1= Exp.Lindex (array_exp, _); e2= content_exp}
-      when Exp.equal (Exp.Lvar pvar) (Idenv.expand_expr idenv array_exp) ->
-        (* Each vararg argument is an assignment to a pvar denoting an array of objects. *)
-        content_exp :: acc
-    | _ ->
-        acc
-  in
-  let values_of_node acc n =
-    Procdesc.Node.get_instrs n |> Instrs.fold ~f:values_of_instr ~init:acc
-  in
-  match Errdesc.find_program_variable_assignment node pvar with
-  | Some (node', _) ->
-      Procdesc.fold_slope_range node' node ~f:values_of_node ~init:[]
-  | None ->
-      []
-
-
 let proc_calls resolve_attributes pdesc filter : (Procname.t * ProcAttributes.t) list =
   let res = ref [] in
   let do_instruction _ instr =
@@ -334,7 +318,8 @@ let proc_calls resolve_attributes pdesc filter : (Procname.t * ProcAttributes.t)
     Instrs.iter ~f:(do_instruction node) instrs
   in
   let nodes = Procdesc.get_nodes pdesc in
-  List.iter ~f:do_node nodes ; List.rev !res
+  List.iter ~f:do_node nodes ;
+  List.rev !res
 
 
 let has_same_signature proc_name =
@@ -386,7 +371,12 @@ let override_exists ?(check_current_type = true) f tenv proc_name =
 (* Only java supported at the moment *)
 
 let override_iter f tenv proc_name =
-  ignore (override_exists (fun pname -> f pname ; false) tenv proc_name)
+  ignore
+    (override_exists
+       (fun pname ->
+         f pname ;
+         false )
+       tenv proc_name)
 
 
 let lookup_attributes tenv proc_name =
@@ -481,6 +471,28 @@ module ObjectiveC = struct
        || String.is_substring ~substring:"Copy" procname )
 
 
+  let is_core_foundation_create_or_copy _ procname =
+    String.is_prefix ~prefix:"CF" procname
+    && ( String.is_substring ~substring:"Create" procname
+       || String.is_substring ~substring:"Copy" procname )
+
+
   let is_core_graphics_release _ procname =
     String.is_prefix ~prefix:"CG" procname && String.is_suffix ~suffix:"Release" procname
+
+
+  let is_modelled_as_alloc _ procname =
+    match Config.pulse_model_alloc_pattern with
+    | Some regex ->
+        Str.string_match regex procname 0
+    | None ->
+        false
+
+
+  let is_modelled_as_release _ procname =
+    match Config.pulse_model_release_pattern with
+    | Some regex ->
+        Str.string_match regex procname 0
+    | None ->
+        false
 end

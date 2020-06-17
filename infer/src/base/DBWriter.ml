@@ -142,7 +142,7 @@ module Implementation = struct
 
 
   let merge_db infer_out_src =
-    let db_file = infer_out_src ^/ ResultsDatabase.database_filename in
+    let db_file = ResultsDirEntryName.get_path ~results_dir:infer_out_src CaptureDB in
     let main_db = ResultsDatabase.get_database () in
     Sqlite3.exec main_db (Printf.sprintf "ATTACH '%s' AS attached" db_file)
     |> SqliteUtils.check_result_code main_db ~log:(Printf.sprintf "attaching database '%s'" db_file) ;
@@ -281,14 +281,18 @@ module Server = struct
   let server () =
     L.debug Analysis Quiet "Sqlite write daemon: starting up@." ;
     if socket_exists () then L.die InternalError "Sqlite write daemon: socket already exists@." ;
-    let socket = Unix.socket ~domain:socket_domain ~kind:Unix.SOCK_STREAM ~protocol:0 in
+    let socket = Unix.socket ~domain:socket_domain ~kind:Unix.SOCK_STREAM ~protocol:0 () in
     in_results_dir ~f:(fun () -> Unix.bind socket ~addr:socket_addr) ;
     (* [backlog] is (supposedly) the length of the queue for pending connections ;
        there are no rules about the implied behaviour though.  Here use optimistically
        the number of workers, though even that is a guess. *)
     Unix.listen socket ~backlog:Config.jobs ;
     L.debug Analysis Quiet "Sqlite write daemon: set up complete, waiting for connections@." ;
-    let shutdown () = in_results_dir ~f:(fun () -> Unix.close socket ; Unix.remove socket_name) in
+    let shutdown () =
+      in_results_dir ~f:(fun () ->
+          Unix.close socket ;
+          Unix.remove socket_name )
+    in
     Utils.try_finally_swallow_timeout ~f:(fun () -> server_loop socket) ~finally:shutdown
 
 
@@ -311,7 +315,8 @@ module Server = struct
   let start () =
     match Unix.fork () with
     | `In_the_child ->
-        ForkUtils.protect ~f:server () ; L.exit 0
+        ForkUtils.protect ~f:server () ;
+        L.exit 0
     | `In_the_parent _child_pid ->
         (* wait for socket to appear, try 5 times, with a 0.1 sec timeout each time ;
            choice of numbers is completely arbitrary *)

@@ -30,11 +30,26 @@ let dup_formatter fmt1 fmt2 =
   let out_funs2 = F.pp_get_formatter_out_functions fmt2 () in
   let f = copy_formatter fmt1 in
   F.pp_set_formatter_out_functions f
-    { F.out_string= (fun s p n -> out_funs1.out_string s p n ; out_funs2.out_string s p n)
-    ; out_indent= (fun n -> out_funs1.out_indent n ; out_funs2.out_indent n)
-    ; out_flush= (fun () -> out_funs1.out_flush () ; out_funs2.out_flush ())
-    ; out_newline= (fun () -> out_funs1.out_newline () ; out_funs2.out_newline ())
-    ; out_spaces= (fun n -> out_funs1.out_spaces n ; out_funs2.out_spaces n) } ;
+    { F.out_string=
+        (fun s p n ->
+          out_funs1.out_string s p n ;
+          out_funs2.out_string s p n )
+    ; out_indent=
+        (fun n ->
+          out_funs1.out_indent n ;
+          out_funs2.out_indent n )
+    ; out_flush=
+        (fun () ->
+          out_funs1.out_flush () ;
+          out_funs2.out_flush () )
+    ; out_newline=
+        (fun () ->
+          out_funs1.out_newline () ;
+          out_funs2.out_newline () )
+    ; out_spaces=
+        (fun n ->
+          out_funs1.out_spaces n ;
+          out_funs2.out_spaces n ) } ;
   f
 
 
@@ -73,13 +88,19 @@ let mk_file_formatter file_fmt category0 =
     print_prefix_if_newline () ;
     out_functions_orig.out_string s p n
   in
-  let out_indent n = print_prefix_if_newline () ; out_functions_orig.out_indent n in
+  let out_indent n =
+    print_prefix_if_newline () ;
+    out_functions_orig.out_indent n
+  in
   let out_newline () =
     print_prefix_if_newline () ;
     out_functions_orig.out_newline () ;
     is_newline := true
   in
-  let out_spaces n = print_prefix_if_newline () ; out_functions_orig.out_spaces n in
+  let out_spaces n =
+    print_prefix_if_newline () ;
+    out_functions_orig.out_spaces n
+  in
   F.pp_set_formatter_out_functions f
     {F.out_string; out_flush= out_functions_orig.out_flush; out_indent; out_newline; out_spaces} ;
   f
@@ -163,7 +184,8 @@ let close_logs () =
   let close_fmt (_, formatters) = flush_formatters formatters in
   List.iter ~f:close_fmt !logging_formatters ;
   Option.iter !log_file ~f:(function file_fmt, chan ->
-      F.pp_print_flush file_fmt () ; Out_channel.close chan )
+      F.pp_print_flush file_fmt () ;
+      Out_channel.close chan )
 
 
 let () = Epilogues.register ~f:close_logs ~description:"flushing logs and closing log file"
@@ -216,7 +238,8 @@ let log_task fmt =
 let task_progress ~f pp x =
   log_task "%a starting@." pp x ;
   let result = f () in
-  log_task "%a DONE@." pp x ; result
+  log_task "%a DONE@." pp x ;
+  result
 
 
 let user_warning fmt = log ~to_console:(not Config.quiet) user_warning_file_fmts fmt
@@ -265,6 +288,16 @@ let debug kind level fmt =
   log ~to_console:false ~to_file debug_file_fmts fmt
 
 
+(** log to scuba as well as in the original logger *)
+let wrap_in_scuba_log ~label ~log fmt =
+  let wrapper message =
+    ScubaLogging.log_message ~label ~message ;
+    (* [format_of_string] is there to satisfy the type checker *)
+    log (format_of_string "%s") message
+  in
+  F.kasprintf wrapper fmt
+
+
 let result fmt = log ~to_console:true result_file_fmts fmt
 
 let environment_info fmt = log ~to_console:false environment_info_file_fmts fmt
@@ -274,6 +307,9 @@ let external_warning fmt = log ~to_console:(not Config.quiet) external_warning_f
 let external_error fmt = log ~to_console:true external_error_file_fmts fmt
 
 let internal_error fmt = log ~to_console:true internal_error_file_fmts fmt
+
+(* mask original function and replicate log in scuba *)
+let internal_error fmt = wrap_in_scuba_log ~label:"internal_error" ~log:internal_error fmt
 
 (** Type of location in ml source: __POS__ *)
 type ocaml_pos = string * int * int * int
@@ -322,7 +358,9 @@ let setup_log_file () =
       let fmt, chan, preexisting_logfile =
         (* if invoked in a sub-dir (e.g., in Buck integrations), log inside the original log file *)
         (* assumes the results dir exists already *)
-        let logfile_path = Config.toplevel_results_dir ^/ Config.log_file in
+        let logfile_path =
+          ResultsDirEntryName.get_path ~results_dir:Config.toplevel_results_dir Logs
+        in
         let preexisting_logfile = PolyVariantEqual.( = ) (Sys.file_exists logfile_path) `Yes in
         let chan = Stdlib.open_out_gen [Open_append; Open_creat] 0o666 logfile_path in
         let file_fmt =
@@ -357,7 +395,8 @@ let reset_delayed_prints () = delayed_prints := new_delayed_prints ()
 (** return the delayed prints *)
 let get_and_reset_delayed_prints () =
   let res = !delayed_prints in
-  reset_delayed_prints () ; res
+  reset_delayed_prints () ;
+  res
 
 
 let force_and_reset_delayed_prints f =
@@ -379,7 +418,11 @@ let d_kfprintf ?color k f fmt =
   match color with
   | Some color when Config.write_html ->
       F.fprintf f "<span class='%s'>" (Pp.color_string color) ;
-      F.kfprintf (fun f -> F.pp_print_string f "</span>" ; k f) f fmt
+      F.kfprintf
+        (fun f ->
+          F.pp_print_string f "</span>" ;
+          k f )
+        f fmt
   | _ ->
       F.kfprintf k f fmt
 

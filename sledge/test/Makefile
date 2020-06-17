@@ -7,7 +7,7 @@
 CLANG_ARGS?=-O0
 
 # executable to test
-SLEDGE_EXE=$(CURDIR)/../_build/_install/dbg/bin/sledge
+SLEDGE_EXE=$(CURDIR)/../_build/_install/debug/bin/sledge
 
 # additional arguments to pass to sledge
 SLEDGE_ARGS?=
@@ -128,7 +128,7 @@ analyze-report-full:
 # list tests with zero or multiple RESULT lines
 report-invalid-results:
 	@find -L * -name '*.out' -exec grep -H -c "RESULT:" {} \; \
-	 | grep -v ":1$"
+	 | grep -v ":1$$"
 
 # report warnings
 warnings:
@@ -136,7 +136,7 @@ warnings:
 
 # run tests and check against expected results
 test:
-	-@$(MAKE) --silent --keep-going clean analyze translate 2>/dev/null
+	-@$(MAKE) --silent --keep-going clean analyze translate
 	@$(MAKE) --silent _analyze-report-raw > report.current
 	@$(MAKE) --silent _translate-report-raw >> report.current
 	@$(DIFF) report.expected report.current
