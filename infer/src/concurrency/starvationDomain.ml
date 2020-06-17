@@ -707,6 +707,8 @@ let strict_mode_call ~callee ~loc astate =
 
 
 let release ({lock_state} as astate) locks =
+  let () = print_endline "\n RELEASE starvation locks: \n" in
+  let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
   { astate with
     lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release l acc) }
 

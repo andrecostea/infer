@@ -306,6 +306,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | Lock locks ->
             let () = print_endline "\n =========================================" in
             let () = print_endline " ANDREEA (Lock)" in
+            let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make extras in
             let proc_name = Summary.get_proc_name summary in
@@ -328,6 +329,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | Unlock locks ->
             let () = print_endline "\n =========================================" in
             let () = print_endline " ANDREEA (UnLock)" in
+            let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make extras in
             let do_unlock locks (* astate *) = List.filter_map ~f:get_lock_path locks (* |> Domain.release astate *) in
@@ -340,6 +342,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let () = pp Format.std_formatter astate in
             astate
         | GuardDestroy _ | GuardUnlock _ ->
+            let () = print_endline "\n =========================================" in
+            let () = print_endline " ANDREEA (GuardUnLock)" in
             { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads }
