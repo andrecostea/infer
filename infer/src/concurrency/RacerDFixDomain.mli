@@ -198,8 +198,8 @@ module AccessSnapshot : sig
       { access: Access.t
       ; thread: ThreadsDomain.t
       ; lock: bool
-      ; locks: Acquisitions.t 
-      ; critical_pair: CriticalPair.t option
+      ; locks: Acquisitions.t  (* @ for racerdifx *)
+      ; critical_pair: CriticalPair.t option (* @ for racerdifx *)
       ; ownership_precondition: OwnershipAbstractValue.t }
   end
 
@@ -218,8 +218,8 @@ module AccessSnapshot : sig
     -> is_write:bool
     -> Location.t
     -> LockDomain.t
-    -> Acquisitions.t
-    -> CriticalPair.t option
+    -> Acquisitions.t (* @ for racerdifx *)
+    -> CriticalPair.t option (* @ for racerdifx *)
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
     -> t option
@@ -231,8 +231,8 @@ module AccessSnapshot : sig
     -> Procname.t
     -> Location.t
     -> LockDomain.t
-    -> LockState.t
-    -> CriticalPair.t option
+    -> LockState.t (* @ for racerdifx *)
+    -> CriticalPair.t option (* @ for racerdifx *)
     -> ThreadsDomain.t
     -> OwnershipAbstractValue.t
     -> t option
@@ -249,8 +249,8 @@ module AccessSnapshot : sig
     -> OwnershipAbstractValue.t
     -> ThreadsDomain.t
     -> LockDomain.t
-    -> LockState.t
-    -> CriticalPair.t option
+    -> LockState.t (* @ for racerdifx *)
+    -> CriticalPair.t option (* @ for racerdifx *)
     -> t option
 end
 
@@ -282,16 +282,19 @@ module Attribute : sig
     | Functional  (** holds a value returned from a callee marked [@Functional] *)
     | OnMainThread  (** boolean is true if the current procedure is running on the main thread *)
     | LockHeld  (** boolean is true if a lock is currently held *)
+    | Synchronized  (** the object is a synchronized data structure *)
 end
 
 module AttributeMapDomain : sig
-  type t
+  include
+    AbstractDomain.InvertedMapS with type key = AccessExpression.t and type value = Attribute.t
 
-  val find : AccessExpression.t -> t -> Attribute.t
-
-  val add : AccessExpression.t -> Attribute.t -> t -> t
+  val get : AccessExpression.t -> t -> Attribute.t
+  (** find the [Attribute.t] associated with a given access expression or return [Attribute.bottom] *)
 
   val is_functional : t -> AccessExpression.t -> bool
+
+  val is_synchronized : t -> AccessExpression.t -> bool
 
   val propagate_assignment : AccessExpression.t -> HilExp.t -> t -> t
   (** propagate attributes from the leaves to the root of an RHS Hil expression *)
@@ -300,8 +303,8 @@ end
 type t =
   { threads: ThreadsDomain.t  (** current thread: main, background, or unknown *)
   ; locks: LockDomain.t  (** boolean that is true if a lock must currently be held *)
-  ; lock_state: LockState.t
-  ; critical_pairs: CriticalPairs.t
+  ; lock_state: LockState.t (* @ for racerdifx *)
+  ; critical_pairs: CriticalPairs.t (* @ for racerdifx *)
   ; accesses: AccessDomain.t
         (** read and writes accesses performed without ownership permissions *)
   ; ownership: OwnershipDomain.t  (** map of access paths to ownership predicates *)
@@ -318,16 +321,17 @@ val add_unannotated_call_access : FormalMap.t -> Procname.t -> HilExp.t list -> 
 type summary =
   { threads: ThreadsDomain.t
   ; locks: LockDomain.t
-  ; critical_pairs: CriticalPairs.t
+  ; critical_pairs: CriticalPairs.t (* @ for racerdifx *)
   ; accesses: AccessDomain.t
   ; return_ownership: OwnershipAbstractValue.t
-  ; return_attribute: Attribute.t }
+  ; return_attribute: Attribute.t
+  ; attributes: AttributeMapDomain.t }
 
 val empty_summary : summary
 
 val pp_summary : F.formatter -> summary -> unit
 
-
+val astate_to_summary : Procdesc.t -> FormalMap.t -> t -> summary
 
 val acquire : ?tenv:Tenv.t -> t -> procname:Procname.t -> loc:Location.t -> Lock.t list -> t
 (** simultaneously acquire a number of locks, no-op if list is empty *)

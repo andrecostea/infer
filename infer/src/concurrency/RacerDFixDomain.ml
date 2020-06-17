@@ -21,6 +21,21 @@ let pp_exp fmt exp =
       AccessPath.pp fmt (AccessExpression.to_access_path exp)
 
 
+let rec should_keep_exp formals (exp : AccessExpression.t) =
+  match exp with
+  | FieldOffset (prefix, fld) ->
+      (not (String.is_substring ~substring:"$SwitchMap" (Fieldname.get_field_name fld)))
+      && should_keep_exp formals prefix
+  | ArrayOffset (prefix, _, _) | AddressOf prefix | Dereference prefix ->
+      should_keep_exp formals prefix
+  | Base (LogicalVar _, _) ->
+      false
+  | Base (((ProgramVar pvar as var), _) as base) ->
+      Var.appears_in_source_code var
+      && (not (Pvar.is_static_local pvar))
+      && (Pvar.is_global pvar || FormalMap.is_formal base formals)
+
+
 module Access = struct
   type t =
     | Read of {exp: AccessExpression.t}
@@ -57,23 +72,7 @@ module Access = struct
         exp
 
 
-  let should_keep formals access =
-    let rec check_access (exp : AccessExpression.t) =
-      match exp with
-      | FieldOffset (prefix, fld) ->
-          (not (String.is_substring ~substring:"$SwitchMap" (Fieldname.get_field_name fld)))
-          && check_access prefix
-      | ArrayOffset (prefix, _, _) | AddressOf prefix | Dereference prefix ->
-          check_access prefix
-      | Base (LogicalVar _, _) ->
-          false
-      | Base (((ProgramVar pvar as var), _) as base) ->
-          Var.appears_in_source_code var
-          && (not (Pvar.is_static_local pvar))
-          && (Pvar.is_global pvar || FormalMap.is_formal base formals)
-    in
-    get_access_exp access |> check_access
-
+  let should_keep formals access = get_access_exp access |> should_keep_exp formals
 
   let map ~f access =
     match access with
@@ -858,7 +857,7 @@ module OwnershipDomain = struct
 end
 
 module Attribute = struct
-  type t = Nothing | Functional | OnMainThread | LockHeld [@@deriving equal]
+  type t = Nothing | Functional | OnMainThread | LockHeld | Synchronized [@@deriving equal]
 
   let pp fmt t =
     ( match t with
@@ -869,7 +868,9 @@ module Attribute = struct
     | OnMainThread ->
         "OnMainThread"
     | LockHeld ->
-        "LockHeld" )
+        "LockHeld"
+    | Synchronized ->
+        "Synchronized" )
     |> F.pp_print_string fmt
 
 
@@ -887,16 +888,20 @@ end
 module AttributeMapDomain = struct
   include AbstractDomain.SafeInvertedMap (AccessExpression) (Attribute)
 
-  let find acc_exp t = find_opt acc_exp t |> Option.value ~default:Attribute.top
+  let get acc_exp t = find_opt acc_exp t |> Option.value ~default:Attribute.top
 
   let is_functional t access_expression =
     match find_opt access_expression t with Some Functional -> true | _ -> false
 
 
+  let is_synchronized t access_expression =
+    match find_opt access_expression t with Some Synchronized -> true | _ -> false
+
+
   let rec attribute_of_expr attribute_map (e : HilExp.t) =
     match e with
     | AccessExpression access_expr ->
-        find access_expr attribute_map
+        get access_expr attribute_map
     | Constant _ ->
         Attribute.Functional
     | Exception expr (* treat exceptions as transparent wrt attributes *) | Cast (_, expr) ->
@@ -1055,7 +1060,8 @@ type summary =
   ; critical_pairs: CriticalPairs.t
   ; accesses: AccessDomain.t
   ; return_ownership: OwnershipAbstractValue.t
-  ; return_attribute: Attribute.t }
+  ; return_attribute: Attribute.t
+  ; attributes: AttributeMapDomain.t }
 
 let empty_summary =
   { threads= ThreadsDomain.bottom
@@ -1063,15 +1069,20 @@ let empty_summary =
   ; critical_pairs= CriticalPairs.bottom
   ; accesses= AccessDomain.bottom
   ; return_ownership= OwnershipAbstractValue.unowned
-  ; return_attribute= Attribute.top }
+  ; return_attribute= Attribute.top
+  ; attributes= AttributeMapDomain.top }
 
-
-let pp_summary fmt {threads; locks; critical_pairs; accesses; return_ownership; return_attribute} =
+let pp_summary fmt {threads; locks; critical_pairs; accesses; return_ownership; return_attribute; attributes} =
   F.fprintf fmt
-    "@\nThreads: %a, Locks: %a Critical Pairs: %a  @\nAccesses %a @\nOwnership: %a @\nReturn Attributes: %a @\n"
+    "@\n\
+     Threads: %a, Locks: %a @\n\
+     Critical Pairs: %a @\n\
+     Accesses %a @\n\
+     Ownership: %a @\n\
+     Return Attribute: %a @\n\
+     Attributes: %a @\n"
     ThreadsDomain.pp threads LockDomain.pp locks CriticalPairs.pp critical_pairs AccessDomain.pp accesses OwnershipAbstractValue.pp
-    return_ownership Attribute.pp return_attribute
-
+    return_ownership Attribute.pp return_attribute AttributeMapDomain.pp attributes
 
 let add_unannotated_call_access formals pname actuals loc (astate : t) =
   match actuals with
@@ -1090,6 +1101,30 @@ let add_unannotated_call_access formals pname actuals loc (astate : t) =
             astate.threads Unowned loc
         in
         {astate with accesses= AccessDomain.add_opt snapshot astate.accesses} )
+
+let astate_to_summary proc_desc formals {threads; locks; critical_pairs; accesses; ownership; attribute_map} =
+  let proc_name = Procdesc.get_proc_name proc_desc in
+  let return_var_exp =
+    AccessExpression.base
+      (Var.of_pvar (Pvar.get_ret_pvar proc_name), Procdesc.get_ret_type proc_desc)
+  in
+  let return_ownership = OwnershipDomain.get_owned return_var_exp ownership in
+  let return_attribute = AttributeMapDomain.get return_var_exp attribute_map in
+  let locks =
+    (* if method is [synchronized] released the lock once. *)
+    if Procdesc.is_java_synchronized proc_desc then LockDomain.release_lock locks else locks
+  in
+  let attributes =
+    (* store only the [Synchronized] attribute for class initializers/constructors *)
+    if Procname.is_java_class_initializer proc_name || Procname.is_constructor proc_name then
+      AttributeMapDomain.filter
+        (fun exp attribute ->
+          match attribute with Synchronized -> should_keep_exp formals exp | _ -> false )
+        attribute_map
+    else AttributeMapDomain.top
+  in
+  (* fix critical_pairs *)
+  {threads; locks; critical_pairs; accesses; return_ownership; return_attribute; attributes}
 
 let with_callsite critical_pairs ?tenv ?subst lock_state call_site thread =
   CriticalPairs.with_callsite critical_pairs ?tenv ?subst lock_state call_site thread

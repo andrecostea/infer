@@ -313,16 +313,19 @@ let config_unsafe checker =
       { id= "resource-leak-lab"
       ; kind= Exercise
       ; support= (fun _ -> Support)
-  | RacerDFix ->
-      { support= supports_clang_and_java
-      ; short_documentation= "the RacerD thread safety fix"
-      ; show_in_help= true
-      ; cli_flag= "racerdfix"
-      ; enabled_by_default= false
-      ; cli_deprecated_flags= [] }
       ; short_documentation= ""
       ; cli_flags= Some {deprecated= []; show_in_help= false}
       ; enabled_by_default= false
+      ; activates= [] }
+  | RacerDFix ->
+      { id= "racerdfix"
+      ; kind=
+          UserFacing
+            {title= "RacerDFix"; markdown_body= [%blob "../../documentation/checkers/RacerDFix.md"]}
+      ; support= supports_clang_and_java
+      ; short_documentation= "Thread safety analysis."
+      ; cli_flags= Some {deprecated= []; show_in_help= true}
+      ; enabled_by_default= true
       ; activates= [] }
   | SIOF ->
       { id= "siof"
