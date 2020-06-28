@@ -228,6 +228,8 @@ module Acquisition = struct
 
   let make ~procname ~loc lock = {lock; loc; procname}
 
+  (* let compare acq1 acq2 = 0 *)
+
   let compare_loc {loc= loc1} {loc= loc2} = Location.compare loc1 loc2
 
   let make_trace_step acquisition =
@@ -245,6 +247,7 @@ module Acquisition = struct
         Some acquisition
     | Some lock ->
         Some {acquisition with lock}
+
 end
 
 (** Set of acquisitions; due to order over acquisitions, each lock appears at most once. *)
@@ -274,7 +277,7 @@ module LockState : sig
 
   val acquire : procname:Procname.t -> loc:Location.t -> Lock.t -> t -> t
 
-  val release : Lock.t -> t -> t
+  val release : ?lock:Lock.t option -> t -> t
 
   val is_lock_taken : Event.t -> t -> bool
 
@@ -291,30 +294,36 @@ end = struct
 
   (* [acquisitions] has the currently held locks, so as to avoid a linear fold in [get_acquisitions].
      This should also increase sharing across returned values from [get_acquisitions]. *)
-  type t = {map: Map.t [@compare.ignore]; acquisitions: Acquisitions.t}
+  (* acquisitions_lifo - temp hack until the nested bug gets fixed *)
+  type t = {map: Map.t [@compare.ignore];
+            acquisitions: Acquisitions.t;
+            acquisitions_lifo: Acquisitions.elt list [@compare.ignore]} (* acquisitions_lifo is temporarily added to cope with the ensted sync bug *)
   [@@deriving compare]
 
   let get_acquisitions {acquisitions} = acquisitions
 
-  let pp fmt {map; acquisitions} =
-    F.fprintf fmt "{map= %a; acquisitions= %a}" Map.pp map Acquisitions.pp acquisitions
+  let pp fmt {map; acquisitions; acquisitions_lifo} =
+    (* let () = print_endline "ANDREEA LockState lifo: " in
+     * let () = List.iter acquisitions_lifo ~f:(Acquisition.pp fmt) in *)
+    F.fprintf fmt "{map= %a; acquisitions= %a; }" Map.pp map Acquisitions.pp acquisitions
 
 
   let join lhs rhs =
     let map = Map.join lhs.map rhs.map in
     let acquisitions = Acquisitions.inter lhs.acquisitions rhs.acquisitions in
-    {map; acquisitions}
+    let acquisitions_lifo = lhs.acquisitions_lifo@rhs.acquisitions_lifo in
+    {map; acquisitions; acquisitions_lifo }
 
 
   let widen ~prev ~next ~num_iters =
     let map = Map.widen ~prev:prev.map ~next:next.map ~num_iters in
     let acquisitions = Acquisitions.inter prev.acquisitions next.acquisitions in
-    {map; acquisitions}
-
+    let acquisitions_lifo = prev.acquisitions_lifo@next.acquisitions_lifo in
+    {map; acquisitions; acquisitions_lifo }
 
   let leq ~lhs ~rhs = Map.leq ~lhs:lhs.map ~rhs:rhs.map
 
-  let top = {map= Map.top; acquisitions= Acquisitions.empty}
+  let top = {map= Map.top; acquisitions= Acquisitions.empty; acquisitions_lifo = []}
 
   let is_top {map} = Map.is_top map
 
@@ -326,7 +335,7 @@ end = struct
         (* false *)
 
 
-  let acquire ~procname ~loc lock {map; acquisitions} =
+  let acquire ~procname ~loc lock {map; acquisitions; acquisitions_lifo} =
     let should_add_acquisition = ref false in
     let map =
       Map.update lock
@@ -339,22 +348,46 @@ end = struct
               Some (LockCount.increment count) )
         map
     in
-    let acquisitions =
+    let acquisitions, acquisitions_lifo =
       if !should_add_acquisition then
-        let acquisition = Acquisition.make ~procname ~loc lock in
-        Acquisitions.add acquisition acquisitions
-      else acquisitions
+        let acquisition  = Acquisition.make ~procname ~loc lock in
+        let acquisitions_lifo = acquisition::acquisitions_lifo in
+        Acquisitions.add acquisition acquisitions, acquisitions_lifo
+      else acquisitions, acquisitions_lifo
     in
-    {map; acquisitions}
+    {map; acquisitions; acquisitions_lifo}
 
+  (* let release lock {map; acquisitions} =
+   *   let should_remove_acquisition = ref false in
+   *   let map =
+   *     Map.update lock
+   *       (function
+   *         | None ->
+   *             None
+   *         | Some count ->
+   *             let new_count = LockCount.decrement count in
+   *             if LockCount.is_top new_count then (
+   *               (\* lock was held, but now it is not, so remove from [aqcuisitions] *\)
+   *               should_remove_acquisition := true ;
+   *               None )
+   *             else Some new_count )
+   *       map
+   *   in
+   *   let acquisitions =
+   *     if !should_remove_acquisition then
+   *       let acquisition = Acquisition.make_dummy lock in
+   *       Acquisitions.remove acquisition acquisitions
+   *     else acquisitions
+   *   in
+   *   {map; acquisitions} *)
 
-  let release lock {map; acquisitions} =
+  (***** Overwrite the above release to bypass the nested sync bug *****)
+  let release ?lock:(lock = None) {map; acquisitions; acquisitions_lifo} =
     let should_remove_acquisition = ref false in
-    let map =
+    let map_fn lock =
       Map.update lock
         (function
-          | None ->
-              None
+          | None -> None
           | Some count ->
               let new_count = LockCount.decrement count in
               if LockCount.is_top new_count then (
@@ -364,13 +397,41 @@ end = struct
               else Some new_count )
         map
     in
-    let acquisitions =
+    let acquisitions_fn lock acquisitions =
       if !should_remove_acquisition then
         let acquisition = Acquisition.make_dummy lock in
         Acquisitions.remove acquisition acquisitions
       else acquisitions
     in
-    {map; acquisitions}
+    match lock with
+    | Some lock ->
+        let map = map_fn lock in
+        let map, lock, acquisitions_lifo =
+          if !should_remove_acquisition then
+            let acquisition = Acquisition.make_dummy lock in
+            let acquisitions_lifo = List.fold_left acquisitions_lifo ~init:[]
+                ~f:(fun a lk -> a@(if Acquisition.compare lk acquisition == 0 then [] else [lk] ))
+            in
+            map, lock, acquisitions_lifo
+          else
+            begin
+              match acquisitions_lifo with
+              | []     -> map, lock, acquisitions_lifo
+              | acq::t -> let map = map_fn acq.lock in
+                  map, acq.lock, t
+            end
+        in
+        let acquisitions = acquisitions_fn lock acquisitions in
+        {map; acquisitions; acquisitions_lifo}
+    | None ->
+        match acquisitions_lifo with
+        | []     -> {map; acquisitions; acquisitions_lifo}
+        | acq::t ->
+            let map = map_fn acq.lock in
+            let acquisitions = acquisitions_fn acq.lock acquisitions in
+            let acquisitions_lifo = t in
+            {map; acquisitions; acquisitions_lifo}
+
 end
 
 
@@ -948,7 +1009,7 @@ let bottom =
 
 
 let is_bottom {threads; locks; lock_state; accesses; ownership; attribute_map} =
-    let () = print_endline "\n ANDREEA is_botoom: " in
+    (* let () = print_endline "\n ANDREEA is_botoom: " in *)
     ThreadsDomain.is_bottom threads && LockDomain.is_bottom locks && AccessDomain.is_empty accesses
     && LockState.is_top lock_state
     && OwnershipDomain.is_empty ownership
@@ -956,7 +1017,7 @@ let is_bottom {threads; locks; lock_state; accesses; ownership; attribute_map} =
 
 
 let leq ~lhs ~rhs =
-  let () = print_endline "\n ANDREEA leq: " in
+  (* let () = print_endline "\n ANDREEA leq: " in *)
   if phys_equal lhs rhs then true
   else
     ThreadsDomain.leq ~lhs:lhs.threads ~rhs:rhs.threads
@@ -967,10 +1028,10 @@ let leq ~lhs ~rhs =
 
 
 let join astate1 astate2 =
-  let () = print_endline "\n ANDREEA (join: astate1): " in
-  let () = pp Format.std_formatter astate1 in
-  let () = print_endline "\n ANDREEA (join: astate2): " in
-  let () = pp Format.std_formatter astate2 in
+  (* let () = print_endline "\n ANDREEA (join: astate1): " in
+   * let () = pp Format.std_formatter astate1 in
+   * let () = print_endline "\n ANDREEA (join: astate2): " in
+   * let () = pp Format.std_formatter astate2 in *)
   let astate =
   if phys_equal astate1 astate2 then astate1
   else
@@ -983,15 +1044,15 @@ let join astate1 astate2 =
     let attribute_map = AttributeMapDomain.join astate1.attribute_map astate2.attribute_map in
     {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
   in
-  let () = print_endline "\n ANDREEA (join: astate): " in
-  let () = pp Format.std_formatter astate in
+  (* let () = print_endline "\n ANDREEA (join: astate): " in
+   * let () = pp Format.std_formatter astate in *)
   astate
 
 let widen ~prev ~next ~num_iters =
-  let () = print_endline "\n ANDREEA (widen: prev): " in
-  let () = pp Format.std_formatter prev in
-  let () = print_endline "\n ANDREEA (widen: next): " in
-  let () = pp Format.std_formatter next in
+  (* let () = print_endline "\n ANDREEA (widen: prev): " in
+   * let () = pp Format.std_formatter prev in
+   * let () = print_endline "\n ANDREEA (widen: next): " in
+   * let () = pp Format.std_formatter next in *)
   let astate = 
   if phys_equal prev next then prev
   else
@@ -1006,8 +1067,8 @@ let widen ~prev ~next ~num_iters =
     in
     {threads; locks; lock_state; critical_pairs; accesses; ownership; attribute_map}
   in
-  let () = print_endline "\n ANDREEA (join: astate): " in
-  let () = pp Format.std_formatter astate in
+  (* let () = print_endline "\n ANDREEA (join: astate): " in
+   * let () = pp Format.std_formatter astate in *)
   astate
 
 let add_critical_pair ?tenv lock_state event thread ~loc acc =
@@ -1029,7 +1090,7 @@ let acquire ?tenv ({lock_state; critical_pairs} as astate) ~procname ~loc locks 
 
 let acquire ?tenv astate ~procname ~loc locks = (* astate *)
   let result = acquire ?tenv astate ~procname ~loc locks in
-  let () = if true then
+  let () = if false then
     let () = print_endline "\n ACQUIRE astate: \n" in
     let () = pp Format.std_formatter astate in
     let () = print_endline "\n ACQUIRE result: \n" in
@@ -1038,12 +1099,18 @@ let acquire ?tenv astate ~procname ~loc locks = (* astate *)
   in result
 
 let release ({lock_state} as astate) locks =
-  { astate with
-    lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release l acc) }
+  (***** BEGIN hack to solve nested sync ******)
+  match locks with
+  | [] ->
+      { astate with lock_state = LockState.release lock_state }
+  | _  ->
+  (***** END hack to solve nested sync ******)
+      { astate with
+        lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release ~lock:(Some l) acc) }
 
 let release astate locks =
   let result = release astate locks in
-  let () = if true then
+  let () = if false then
       let () = print_endline "\n RELEASE locks: \n" in
       let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
       let () = print_endline "\n RELEASE astate: \n" in
