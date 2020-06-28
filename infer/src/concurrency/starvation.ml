@@ -252,8 +252,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             log_parse_error "Couldn't parse lock in guard constructor" callee actuals ;
             astate )
       | Unlock locks ->
-          let () = print_endline "\n =========================================" in
-          let () = print_endline " ANDREEA (UnLock)" in
+          (* let () = print_endline "\n =========================================" in
+           * let () = print_endline " ANDREEA (UnLock)" in
+           * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
+           * let () = print_endline " " in *)
           do_unlock locks astate
       | GuardUnlock guard ->
           Domain.unlock_guard astate guard

@@ -97,16 +97,16 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let add_reads formals exps loc (astate: Domain.t) tenv =
     let open Domain in
-    let () = print_endline "\n =========================================\n" in
-    let () = print_endline "\n ANDREEA (read): " in
-    let () = print_endline "\n Lock: " in
-    let () = LockDomain.pp Format.std_formatter astate.locks in
-    let () = print_endline "\n Lock State: " in
-    let () = LockState.pp Format.std_formatter astate.lock_state in
-    let () = print_endline " " in
+    (* let () = print_endline "\n =========================================\n" in
+     * let () = print_endline "\n ANDREEA (read): " in
+     * let () = print_endline "\n Lock: " in *)
+    (* let () = LockDomain.pp Format.std_formatter astate.locks in
+     * let () = print_endline "\n Lock State: " in
+     * let () = LockState.pp Format.std_formatter astate.lock_state in
+     * let () = print_endline " " in *)
     let result = add_reads formals exps loc astate tenv in
-    let () = print_endline "\n Read Final: " in
-    let () = pp Format.std_formatter result in
+    (* let () = print_endline "\n Read Final: " in
+     * let () = pp Format.std_formatter result in *)
     result
 
 
@@ -177,14 +177,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks  threads actuals
       callee_pname loc =
-    let () = print_endline "\n =========================================\n ANDREEA (add_callee_accesses): " in
-    let () = Domain.pp  Format.std_formatter caller_astate in
-    let () = print_string "\n callee accesses: \n" in
-    let () = Domain.AccessDomain.pp Format.std_formatter callee_accesses in
+    (* let () = print_endline "\n =========================================\n ANDREEA (add_callee_accesses): " in
+     * let () = Domain.pp  Format.std_formatter caller_astate in
+     * let () = print_string "\n callee accesses: \n" in
+     * let () = Domain.AccessDomain.pp Format.std_formatter callee_accesses in *)
     let new_astate = add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks threads actuals
         callee_pname loc in
-    let () = print_string "\n output: \n" in
-    let () = Domain.AccessDomain.pp Format.std_formatter new_astate in
+    (* let () = print_string "\n output: \n" in
+     * let () = Domain.AccessDomain.pp Format.std_formatter new_astate in *)
     new_astate
 
   let call_without_summary tenv callee_pname ret_base actuals astate =
@@ -248,8 +248,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       else astate
     in
     let callsite = CallSite.make callee_pname loc in
-    let () = print_endline "\n Procedure: " in
-    let () = Procname.pp  Format.std_formatter callee_pname in
+    (* let () = print_endline "\n Procedure: " in
+     * let () = Procname.pp  Format.std_formatter callee_pname in *)
     let astate =
       match get_thread_assert_effect callee_pname with
       | BackgroundThread ->
@@ -280,9 +280,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         in
         match get_lock_effect callee_pname actuals with
         | Lock locks ->
-            let () = print_endline "\n =========================================" in
-            let () = print_endline " ANDREEA (Lock)" in
-            let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
+            (* let () = print_endline "\n =========================================" in
+             * let () = print_endline " ANDREEA (Lock)" in
+             * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
             let proc_name = Procdesc.get_proc_name proc_desc in
@@ -294,8 +294,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let astate = { astate with
               locks= LockDomain.acquire_lock astate.locks
             ; threads= update_for_lock_use astate.threads } in
-            let () = print_endline "\n Lock - final " in
-            let () = pp Format.std_formatter astate in
+            (* let () = print_endline "\n Lock - final " in
+             * let () = pp Format.std_formatter astate in *)
             astate
         | GuardLock _ | GuardConstruct {acquire_now= true} ->
             { astate with
@@ -303,8 +303,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             (* TODO-ANDREEA must acquire the lock here *)
             ; threads= update_for_lock_use astate.threads }
         | Unlock locks ->
-            let () = print_endline "\n =========================================" in
-            let () = print_endline " ANDREEA (UnLock)" in
+            (* let () = print_endline "\n =========================================" in
+             * let () = print_endline " ANDREEA (UnLock)" in *)
             let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
@@ -314,12 +314,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let astate = { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads } in
-            let () = print_endline "\n UnLock - final " in
-            let () = pp Format.std_formatter astate in
+            (* let () = print_endline "\n UnLock - final " in
+             * let () = pp Format.std_formatter astate in *)
             astate
         | GuardDestroy _ | GuardUnlock _ ->
-            let () = print_endline "\n =========================================" in
-            let () = print_endline " ANDREEA (GuardUnLock)" in
+            (* let () = print_endline "\n =========================================" in
+             * let () = print_endline " ANDREEA (GuardUnLock)" in *)
             { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads }
@@ -433,15 +433,15 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let do_assignment lhs_access_exp rhs_exp loc analysis_data (astate : Domain.t) =
     let result = do_assignment lhs_access_exp rhs_exp loc analysis_data astate in
     let open Domain in
-    let () = print_endline "\n =========================================\n" in
-    let () = print_endline "\n ANDREEA (assignment): " in
-    let () = print_endline "\n Lock: " in
-    let () = LockDomain.pp Format.std_formatter astate.locks in
-    let () = print_endline "\n Lock State: " in
-    let () = LockState.pp Format.std_formatter astate.lock_state in
-    let () = print_endline " " in
-    let () = print_endline "\n Assignment Final: " in
-    let () = pp Format.std_formatter result in
+    (* let () = print_endline "\n =========================================\n" in
+     * let () = print_endline "\n ANDREEA (assignment): " in
+     * let () = print_endline "\n Lock: " in
+     * let () = LockDomain.pp Format.std_formatter astate.locks in
+     * let () = print_endline "\n Lock State: " in
+     * let () = LockState.pp Format.std_formatter astate.lock_state in
+     * let () = print_endline " " in
+     * let () = print_endline "\n Assignment Final: " in
+     * let () = pp Format.std_formatter result in *)
     result
 
   let do_assume formals assume_exp loc tenv (astate : Domain.t) =
@@ -461,14 +461,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | Attribute.(Functional | Nothing | Synchronized) ->
           acc
     in
-    let () = print_endline "\n ANDREEA (do_assume): " in
-    let () = pp Format.std_formatter astate in
+    (* let () = print_endline "\n ANDREEA (do_assume): " in
+     * let () = pp Format.std_formatter astate in *)
     let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
-    let () = print_endline "\n =========================================\n ANDREEA (do_assume): cp " in
-    let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
-    let () = print_string "\n locks: " in
-    let () = LockDomain.pp Format.std_formatter astate.locks in
-     let () = print_endline " " in
+    (* let () = print_endline "\n =========================================\n ANDREEA (do_assume): cp " in
+     * let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
+     * let () = print_string "\n locks: " in
+     * let () = LockDomain.pp Format.std_formatter astate.locks in
+     *  let () = print_endline " " in *)
     let accesses =
       add_access formals loc ~is_write_access:false astate.locks
         (RacerDFixDomain.get_acquisitions astate.lock_state)

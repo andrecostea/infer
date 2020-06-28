@@ -707,11 +707,17 @@ let strict_mode_call ~callee ~loc astate =
 
 
 let release ({lock_state} as astate) locks =
-  let () = print_endline "\n RELEASE starvation locks: \n" in
-  let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
+  (* let () = print_endline "\n RELEASE starvation locks: \n" in
+   * let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
+   * let () = print_endline "\n ASTATE: " in
+   * let () = pp Format.std_formatter astate in *)
+  let astate = 
   { astate with
     lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release l acc) }
-
+  in
+  (* let () = print_endline "\n ASTATE (after release):" in
+   * let () = pp Format.std_formatter astate in *)
+  astate
 
 let add_guard ~acquire_now ~procname ~loc tenv astate guard lock =
   let astate = {astate with guard_map= GuardToLockMap.add_guard ~guard ~lock astate.guard_map} in
