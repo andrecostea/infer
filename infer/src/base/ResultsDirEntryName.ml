@@ -25,6 +25,7 @@ type id =
   | PerfEvents
   | ProcnamesLocks
   | RacerDIssues
+  | RacerDFixIssues
   | ReportCostsJson
   | ReportHtml
   | ReportJson
@@ -128,7 +129,12 @@ let of_id = function
       ; kind= IssuesDirectory
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Delete }
-  | ReportCostsJson ->
+  | RacerDFixIssues ->
+      { rel_path= "racerdfix"
+      ; kind= IssuesDirectory
+      ; before_incremental_analysis= Delete
+      ; before_caching_capture= Delete }
+| ReportCostsJson ->
       { rel_path= "costs-report.json"
       ; kind= File
       ; before_incremental_analysis= Delete

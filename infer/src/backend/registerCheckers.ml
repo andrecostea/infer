@@ -128,6 +128,11 @@ let all_checkers =
         (let racerd_proc = interprocedural Payloads.Fields.racerd RacerD.analyze_procedure in
          let racerd_file = file RacerDIssues Payloads.Fields.racerd RacerD.file_analysis in
          [(racerd_proc, Clang); (racerd_proc, Java); (racerd_file, Clang); (racerd_file, Java)] ) }
+  ; { checker= RacerDFix
+    ; callbacks=
+        (let racerd_proc = interprocedural Payloads.Fields.racerdfix RacerDFix.analyze_procedure in
+         let racerd_file = file RacerDFixIssues Payloads.Fields.racerdfix RacerDFix.file_analysis in
+         [(racerd_proc, Clang); (racerd_proc, Java); (racerd_file, Clang); (racerd_file, Java)] ) }
   ; { checker= Quandary
     ; callbacks=
         [ (interprocedural Payloads.Fields.quandary JavaTaintAnalysis.checker, Java)

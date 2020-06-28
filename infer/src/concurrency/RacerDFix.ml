@@ -686,21 +686,21 @@ let get_reporting_explanation_java report_kind tenv pname thread =
   in
   match (report_kind, annotation_explanation_opt) with
   | GuardedByViolation, _ ->
-      ( IssueType.guardedby_violation_racerd
+      ( IssueType.guardedby_violation_racerd_2
       , F.asprintf "@\n Reporting because field is annotated %a" MF.pp_monospaced "@GuardedBy" )
   | UnannotatedInterface, Some threadsafe_explanation ->
-      (IssueType.interface_not_thread_safe, F.asprintf "%s." threadsafe_explanation)
+      (IssueType.interface_not_thread_safe_2, F.asprintf "%s." threadsafe_explanation)
   | UnannotatedInterface, None ->
       Logging.die InternalError
         "Reporting non-threadsafe interface call, but can't find a @ThreadSafe annotation"
   | _, Some threadsafe_explanation when RacerDFixDomain.ThreadsDomain.is_any thread ->
-      ( IssueType.thread_safety_violation
+      ( IssueType.thread_safety_violation_2
       , F.asprintf
           "%s, so we assume that this method can run in parallel with other non-private methods in \
            the class (including itself)."
           threadsafe_explanation )
   | _, Some threadsafe_explanation ->
-      ( IssueType.thread_safety_violation
+      ( IssueType.thread_safety_violation_2
       , F.asprintf
           "%s. Although this access is not known to run on a background thread, it may happen in \
            parallel with another access that does."
@@ -708,10 +708,10 @@ let get_reporting_explanation_java report_kind tenv pname thread =
   | _, None ->
       (* failed to explain based on @ThreadSafe annotation; have to justify using background thread *)
       if RacerDFixDomain.ThreadsDomain.is_any thread then
-        ( IssueType.thread_safety_violation
+        ( IssueType.thread_safety_violation_2
         , F.asprintf "@\n Reporting because this access may occur on a background thread." )
       else
-        ( IssueType.thread_safety_violation
+        ( IssueType.thread_safety_violation_2
         , F.asprintf
             "@\n\
             \ Reporting because another access to the same memory occurs on a background thread, \
@@ -719,7 +719,7 @@ let get_reporting_explanation_java report_kind tenv pname thread =
 
 
 (** Explain why we are reporting this access, in C++ *)
-let get_reporting_explanation_cpp = (IssueType.lock_consistency_violation, "")
+let get_reporting_explanation_cpp = (IssueType.lock_consistency_violation_2, "")
 
 (** Explain why we are reporting this access *)
 let get_reporting_explanation report_kind tenv pname thread =

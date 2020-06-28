@@ -217,6 +217,8 @@ val field_not_null_checked : t
 
 val guardedby_violation_racerd : t
 
+val guardedby_violation_racerd_2 : t
+
 val impure_function : t
 
 val inefficient_keyset_iterator : t
@@ -251,6 +253,8 @@ val integer_overflow_u5 : t
 
 val interface_not_thread_safe : t
 
+val interface_not_thread_safe_2 : t
+
 val internal_error : t
 
 val invariant_call : t
@@ -268,6 +272,8 @@ val leak_unknown_origin : t
 val lockless_violation : t
 
 val lock_consistency_violation : t
+
+val lock_consistency_violation_2 : t
 
 val logging_private_data : t
 
@@ -336,6 +342,8 @@ val strong_self_not_checked : t
 val symexec_memory_error : t
 
 val thread_safety_violation : t
+
+val thread_safety_violation_2 : t
 
 val topl_error : t
 

@@ -617,11 +617,13 @@ let _global_variable_initialized_with_function_or_method_call =
       [%blob
         "../../documentation/issues/GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL.md"]
 
-
 let guardedby_violation_racerd =
   register_from_string Warning ~id:"GUARDEDBY_VIOLATION" ~hum:"GuardedBy Violation" RacerD
     ~user_documentation:[%blob "../../documentation/issues/GUARDEDBY_VIOLATION.md"]
 
+let guardedby_violation_racerd_2 =
+  register_from_string Warning ~id:"GUARDEDBY_VIOLATION_2" ~hum:"GuardedBy Violation" RacerDFix
+    ~user_documentation:[%blob "../../documentation/issues/GUARDEDBY_VIOLATION.md"]
 
 let impure_function = register_from_string ~id:"IMPURE_FUNCTION" Error Impurity
 
@@ -702,6 +704,9 @@ let interface_not_thread_safe =
   register_from_string Warning ~id:"INTERFACE_NOT_THREAD_SAFE" RacerD
     ~user_documentation:[%blob "../../documentation/issues/INTERFACE_NOT_THREAD_SAFE.md"]
 
+let interface_not_thread_safe_2 =
+  register_from_string Warning ~id:"INTERFACE_NOT_THREAD_SAFE_2" RacerDFix
+    ~user_documentation:[%blob "../../documentation/issues/INTERFACE_NOT_THREAD_SAFE.md"]
 
 let internal_error =
   register_from_string ~visibility:Developer ~id:"Internal_error" Error Biabduction
@@ -733,6 +738,9 @@ let lock_consistency_violation =
   register_from_string Warning ~id:"LOCK_CONSISTENCY_VIOLATION" RacerD
     ~user_documentation:[%blob "../../documentation/issues/LOCK_CONSISTENCY_VIOLATION.md"]
 
+let lock_consistency_violation_2 =
+  register_from_string Warning ~id:"LOCK_CONSISTENCY_VIOLATION_2" RacerDFix
+    ~user_documentation:[%blob "../../documentation/issues/LOCK_CONSISTENCY_VIOLATION.md"]
 
 let lockless_violation =
   register_from_string ~id:"LOCKLESS_VIOLATION" Error Starvation
@@ -911,6 +919,9 @@ let thread_safety_violation =
   register_from_string Warning ~id:"THREAD_SAFETY_VIOLATION" RacerD
     ~user_documentation:[%blob "../../documentation/issues/THREAD_SAFETY_VIOLATION.md"]
 
+let thread_safety_violation_2 =
+  register_from_string Warning ~id:"THREAD_SAFETY_VIOLATION_2" RacerDFix
+    ~user_documentation:[%blob "../../documentation/issues/THREAD_SAFETY_VIOLATION.md"]
 
 let complexity_increase ~kind ~is_on_ui_thread =
   register_from_cost_string ~kind ~is_on_ui_thread "%s_COMPLEXITY_INCREASE"

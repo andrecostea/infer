@@ -979,8 +979,7 @@ OPTIONS
            
        --racerdfix-only
            Activates: Enable --racerdfix and disable all other checkers
-           (Conversely: --no-racerdfixg-only)           See also infer-analyze(1).
-
+           (Conversely: --no-racerdfix-only)           See also infer-analyze(1).
 
        --reactive,-r
            Activates: Reactive mode: the analysis starts from the files
