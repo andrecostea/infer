@@ -167,6 +167,7 @@ $(b,infer) $(b,capture) $(i,[options])
 $(b,infer) $(b,compile) $(i,[options])
 $(b,infer) $(b,help) $(i,[options])
 $(b,infer) $(b,explore) $(i,[options])
+$(b,infer) $(b,fix) $(i,[options])
 $(b,infer) $(b,report) $(i,[options])
 $(b,infer) $(b,reportdiff) $(i,[options])
 $(b,infer) $(b,run) $(i,[options])
@@ -265,6 +266,18 @@ $(b,infer) $(i,[options])|}
     ~see_also:InferCommand.all_commands "infer"
 
 
+let fix =
+  mk_command_doc ~title:"Infer Reporting" ~short_description:"compute and manipulate infer results"
+    ~synopsis:"$(b,infer) $(b,fix) $(i,[options]) [$(i,file.specs)...]"
+    ~description:
+      [ `P
+          "Read, convert, and print .specs files in the results directory. Each spec is printed to \
+           standard output unless option -q is used."
+      ; `P
+          "If no specs file are passed on the command line, process all the .specs in the results \
+           directory." ]
+    ~see_also:InferCommand.[Run]
+
 let report =
   mk_command_doc ~title:"Infer Reporting" ~short_description:"compute and manipulate infer results"
     ~synopsis:"$(b,infer) $(b,report) $(i,[options]) [$(i,file.specs)...]"
@@ -327,6 +340,7 @@ let command_to_data =
   ; mk Capture capture
   ; mk Compile compile
   ; mk Explore explore
+  ; mk Fix fix
   ; mk Help help
   ; mk Report report
   ; mk ReportDiff reportdiff

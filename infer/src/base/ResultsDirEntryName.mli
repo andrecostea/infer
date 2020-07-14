@@ -30,6 +30,7 @@ type id =
   | ReportCostsJson  (** reports of the costs analysis *)
   | ReportHtml  (** directory of the HTML report *)
   | ReportJson  (** the main product of the analysis: [report.json] *)
+  | ReportFixJson  (** the main product of the analysis: [report.json] *)
   | ReportText  (** a human-readable textual version of [report.json] *)
   | ReportXML  (** a PMD-style XML version of [report.json] *)
   | RetainCycles  (** directory of retain cycles dotty files *)

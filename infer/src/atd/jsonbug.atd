@@ -66,6 +66,43 @@ type jsonbug = {
 
 type report = jsonbug list
 
+type fix_mode = [Insert | Replace | ChangeScope]
+
+type patch = {
+  line: int;
+  line_start: int;
+  line_end: int;
+  fix_kind: fix_mode;
+  code_snippet: int;
+}
+
+type jsonfix = {
+  bug_type : string;
+  ?doc_url : string option;
+  qualifier : string;
+  severity : string;
+  line: int;
+  column: int;
+  procedure : string;
+  procedure_start_line : int;
+  file : string;
+  patches : patch list;
+  bug_trace : json_trace_item list;
+  key : string;
+  ?node_key : string option;
+  hash : string;
+  ?dotty : string option;
+  ?infer_source_loc: loc option;
+  bug_type_hum: string;
+  ?linters_def_file: string option;
+  ?traceview_id: int option;
+  ?censored_reason : string option;
+  ?access : string option;
+  ?extras : extra option;
+}
+
+type report_fix = jsonfix list
+
 
 type hum_info = {
   hum_polynomial : string;

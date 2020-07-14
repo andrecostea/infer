@@ -19,3 +19,5 @@ val delete : Procname.t -> unit
     Summary.ml and ondemand.ml *)
 
 val pp_from_config : Format.formatter -> unit
+
+val pp_from_config_to_json : Format.formatter -> unit

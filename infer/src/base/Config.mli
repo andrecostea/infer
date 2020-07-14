@@ -73,6 +73,8 @@ val fail_on_issue_exit_code : int
 
 val fcp_dir : string
 
+val fix : bool
+
 val idempotent_getters : bool
 
 val initial_analysis_time : float

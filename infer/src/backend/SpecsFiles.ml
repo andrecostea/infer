@@ -58,6 +58,8 @@ let summary_iterator spec_files =
     | None ->
         L.(die UserError) "Error: cannot open file %s@." fname
     | Some summary ->
+        (* let () = print_endline "======================== ANDREEA" in
+         * let () =  Summary.pp_text Format.std_formatter summary in *)
         f summary
   in
   let iterate f = List.iter ~f:(do_spec f) sorted_spec_files in
@@ -80,3 +82,9 @@ let pp_from_config fmt =
   iter_from_config ~f:(fun summary ->
       F.fprintf fmt "Procedure: %a@\n%a@." Procname.pp (Summary.get_proc_name summary)
         Summary.pp_text summary )
+
+let pp_from_config_to_json fmt =
+  iter_from_config ~f:(fun summary ->
+      F.fprintf fmt "Procedure: %a@\n%a@." Procname.pp (Summary.get_proc_name summary)
+        Summary.pp_text summary )
+

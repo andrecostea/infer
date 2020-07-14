@@ -36,7 +36,7 @@ let setup () =
   ( match Config.command with
   | Analyze ->
       ResultsDir.assert_results_dir "have you run capture before?"
-  | Report | ReportDiff ->
+  | Fix | Report | ReportDiff ->
       ResultsDir.create_results_dir ()
   | Capture | Compile | Run ->
       let driver_mode = Lazy.force Driver.mode_from_command_line in
@@ -65,7 +65,7 @@ let setup () =
       () ) ;
   let has_result_dir =
     match Config.command with
-    | Analyze | Capture | Compile | Explore | Report | ReportDiff | Run ->
+    | Analyze | Capture | Compile | Explore | Fix | Report | ReportDiff | Run ->
         true
     | Help ->
         false
@@ -178,6 +178,7 @@ let () =
         L.result
           "To see Infer's manual, run `infer --help`.@\n\
            To see help about the \"help\" command itself, run `infer help --help`.@\n"
+  | Fix -> L.result "%t" SpecsFiles.pp_from_config
   | Report -> (
       let write_from_json out_path =
         IssuesTest.write_from_json ~json_path:Config.from_json_report ~out_path

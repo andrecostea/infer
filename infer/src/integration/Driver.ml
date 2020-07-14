@@ -185,8 +185,10 @@ let execute_analyze ~changed_files =
 
 
 let report ?(suppress_console = false) () =
+  let () = print_endline ">>>> ANDREEA: report" in
+  let fixes_json  = ResultsDir.get_path ReportFixJson in
   let issues_json = ResultsDir.get_path ReportJson in
-  JsonReports.write_reports ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
+  JsonReports.write_reports ~fixes_json ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
   (* Post-process the report according to the user config. By default, calls report.py to create a
      human-readable report.
 
@@ -238,7 +240,7 @@ let analyze_and_report ?suppress_console_report ~changed_files mode =
     | _ when Config.infer_is_clang || Config.infer_is_javac ->
         (* Called from another integration to do capture only. *)
         (false, false)
-    | (Capture | Compile | Explore | Help | Report | ReportDiff), _ ->
+    | (Capture | Compile | Explore | Help | Fix | Report | ReportDiff), _ ->
         (false, false)
     | (Analyze | Run), _ ->
         (true, true)

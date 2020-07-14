@@ -59,13 +59,12 @@ let add source_file cfg tenv integer_type_widths =
   else
     SqliteUtils.with_transaction (ResultsDatabase.get_database ()) ~f:(fun () ->
         Cfg.store source_file cfg ) ;
-  DBWriter.add_source_file
+     DBWriter.add_source_file
     ~source_file:(SourceFile.SQLite.serialize source_file)
     ~tenv:(Tenv.SQLite.serialize tenv)
     ~integer_type_widths:(Typ.IntegerWidths.SQLite.serialize integer_type_widths)
     ~proc_names:(Procname.SQLiteList.serialize proc_names)
-
-
+    
 let get_all ~filter () =
   let db = ResultsDatabase.get_database () in
   (* we could also register this statement but it's typically used only once per run so just prepare

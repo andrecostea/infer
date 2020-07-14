@@ -59,6 +59,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         let base, accesses = AccessExpression.to_accesses access_expr in
         add_field_accesses base acc accesses )
 
+  let add_access formals loc ~is_write_access locks acqs critical_pair threads ownership tenv access_domain exp =
+    (* let () = print_endline "\n =========================================\n" in
+     * let () = print_endline "\n ANDREEA (add_access in): " in *)
+    (* let () = Domain.AccessDomain.pp Format.std_formatter access_domain in *)
+    let result = add_access formals loc ~is_write_access locks acqs critical_pair threads ownership tenv access_domain exp in
+    (* let () = print_endline "\n ANDREEA (add_access out): " in
+     * let () = Domain.AccessDomain.pp Format.std_formatter result in *)
+    result
 
   let make_container_access {interproc= {tenv}; formals} ret_base callee_pname ~is_write receiver_ap
       callee_loc (astate : Domain.t) =
@@ -96,14 +104,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     {astate with accesses= accesses'}
 
   let add_reads formals exps loc (astate: Domain.t) tenv =
-    let open Domain in
+    (* let open Domain in *)
     (* let () = print_endline "\n =========================================\n" in
-     * let () = print_endline "\n ANDREEA (read): " in
-     * let () = print_endline "\n Lock: " in *)
-    (* let () = LockDomain.pp Format.std_formatter astate.locks in
+     * let () = print_endline "\n ANDREEA (read): " in *)
+    (* let () = print_endline "\n Lock: " in
+     * let () = LockDomain.pp Format.std_formatter astate.locks in
      * let () = print_endline "\n Lock State: " in
-     * let () = LockState.pp Format.std_formatter astate.lock_state in
-     * let () = print_endline " " in *)
+     * let () = LockState.pp Format.std_formatter astate.lock_state in *)
+    (* let () = print_endline "\n Read astate: " in
+     * let () = pp Format.std_formatter astate in
+     * let () = print_string "\n Location: " in
+     * let () = Location.pp Format.std_formatter loc in *)
     let result = add_reads formals exps loc astate tenv in
     (* let () = print_endline "\n Read Final: " in
      * let () = pp Format.std_formatter result in *)
@@ -281,8 +292,8 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         match get_lock_effect callee_pname actuals with
         | Lock locks ->
             (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (Lock)" in
-             * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
+             * let () = print_endline " ANDREEA (Lock)" in *)
+            (* let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
             let proc_name = Procdesc.get_proc_name proc_desc in
@@ -304,12 +315,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             ; threads= update_for_lock_use astate.threads }
         | Unlock locks ->
             (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (UnLock)" in *)
-            let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
+             * let () = print_endline " ANDREEA (UnLock)" in
+             * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
             let do_unlock locks (* astate *) = List.filter_map ~f:get_lock_path locks (* |> Domain.release astate *) in
             let locks = do_unlock locks in
+            (* let () = print_endline "\n UnLock - init " in
+             * let () = pp Format.std_formatter astate in *)
             let astate = release astate locks in
             let astate = { astate with
               locks= LockDomain.release_lock astate.locks
@@ -432,15 +445,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let do_assignment lhs_access_exp rhs_exp loc analysis_data (astate : Domain.t) =
     let result = do_assignment lhs_access_exp rhs_exp loc analysis_data astate in
-    let open Domain in
+    (* let open Domain in *)
     (* let () = print_endline "\n =========================================\n" in
-     * let () = print_endline "\n ANDREEA (assignment): " in
-     * let () = print_endline "\n Lock: " in
+     * let () = print_endline "\n ANDREEA (assignment): " in *)
+    (* let () = print_endline "\n Lock: " in
      * let () = LockDomain.pp Format.std_formatter astate.locks in
      * let () = print_endline "\n Lock State: " in
      * let () = LockState.pp Format.std_formatter astate.lock_state in
-     * let () = print_endline " " in
-     * let () = print_endline "\n Assignment Final: " in
+     * let () = print_endline " " in *)
+    (* let () = print_endline "\n Assignment in: " in
+     * let () = pp Format.std_formatter astate in
+     * let () = print_endline "\n Assignment out: " in
      * let () = pp Format.std_formatter result in *)
     result
 
@@ -511,6 +526,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         do_assume formals assume_exp loc tenv astate
     | Metadata _ ->
         astate
+
+  let exec_instr astate  analysis_data a instr =
+    (* let () = print_endline "\n ANDREEA (exec_instr in): " in
+     * let () = Domain.pp Format.std_formatter astate in *)
+    let result = exec_instr astate analysis_data a instr in
+    (* let () = print_endline "\n ANDREEA (exec_instr out): " in
+     * let () = Domain.pp Format.std_formatter astate in *)
+    result
 
 
   let pp_session_name _node fmt = F.pp_print_string fmt "racerdfix"
@@ -1192,6 +1215,9 @@ let make_results_table exe_env summaries =
       accesses acc
   in
   List.fold summaries ~init:ReportMap.empty ~f:(fun acc (proc_desc, summary) ->
+      (* let () = print_endline "\n =========================================\n" in
+       * let () = print_endline "\n ANDREEA (make results table): " in
+       * let () = RacerDFixDomain.pp_summary Format.std_formatter summary in *)
       let procname = Procdesc.get_proc_name proc_desc in
       let tenv = Exe_env.get_tenv exe_env procname in
       aggregate_post tenv procname acc summary )

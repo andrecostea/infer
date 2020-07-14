@@ -302,7 +302,7 @@ end = struct
 
   let get_acquisitions {acquisitions} = acquisitions
 
-  let pp fmt {map; acquisitions; acquisitions_lifo} =
+  let pp fmt {map; acquisitions} =
     (* let () = print_endline "ANDREEA LockState lifo: " in
      * let () = List.iter acquisitions_lifo ~f:(Acquisition.pp fmt) in *)
     F.fprintf fmt "{map= %a; acquisitions= %a; }" Map.pp map Acquisitions.pp acquisitions

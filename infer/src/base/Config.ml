@@ -489,7 +489,7 @@ let () =
     match cmd with
     | Report ->
         `Add
-    | Analyze | Capture | Compile | Explore | Help | ReportDiff | Run ->
+    | Analyze | Capture | Compile | Explore | Fix | Help | ReportDiff | Run ->
         `Reject
   in
   (* make sure we generate doc for all the commands we know about *)
@@ -1003,7 +1003,7 @@ and ( bo_debug
         match command with
         | Explore | Help ->
             None
-        | (Analyze | Capture | Compile | Report | ReportDiff | Run) as command ->
+        | (Analyze | Capture | Compile | Fix | Report | ReportDiff | Run) as command ->
             Some (command, manual_generic) )
   in
   let bo_debug =
@@ -1290,6 +1290,12 @@ and force_delete_results_dir =
       InferCommand.[(Capture, manual_generic); (Compile, manual_generic); (Run, manual_generic)]
     "Do not refuse to delete the results directory if it doesn't look like an infer results \
      directory."
+
+
+and fix =
+  CLOpt.mk_bool ~long:"fix" ~default:true
+    ~in_help:InferCommand.[(Analyze, manual_generic); (Run, manual_generic)]
+    "Run the reporting phase once the analysis has completed"
 
 
 and force_integration =
@@ -2777,6 +2783,8 @@ and file_renamings = !file_renamings
 and filter_paths = !filter_paths
 
 and filtering = !filtering
+
+and fix = !fix
 
 and force_delete_results_dir = !force_delete_results_dir
 
