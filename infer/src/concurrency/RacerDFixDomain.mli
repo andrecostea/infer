@@ -252,6 +252,7 @@ module AccessSnapshot : sig
     -> LockState.t (* @ for racerdifx *)
     -> CriticalPair.t option (* @ for racerdifx *)
     -> t option
+
 end
 
 module AccessDomain : sig
@@ -346,3 +347,5 @@ val pp_pair_opt : F.formatter -> CriticalPair.t option -> unit
 val get_acquisitions : LockState.t -> Acquisitions.t
 
 val different_locks : Acquisitions.t -> Acquisitions.t -> bool
+
+val pp_summary_json : summary -> Jsonbug_j.snapshot list

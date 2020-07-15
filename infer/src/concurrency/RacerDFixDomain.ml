@@ -92,7 +92,6 @@ module Access = struct
         let exp' = f exp in
         if phys_equal exp exp' then access else InterfaceCall {record with exp= exp'}
 
-
   let pp fmt = function
     | Read {exp} ->
         F.fprintf fmt "Read of %a" AccessExpression.pp exp
@@ -106,6 +105,18 @@ module Access = struct
         F.fprintf fmt "Call to un-annotated interface method %a.%a" AccessExpression.pp exp
           Procname.pp pname
 
+  let pp_json access =
+    let access_mode, exp =
+    match access with
+      | Read {exp}  -> "Read",  F.asprintf "%a" AccessExpression.pp exp
+      | Write {exp} -> "Write", F.asprintf "%a" AccessExpression.pp exp
+      | ContainerRead {exp; pname}  -> "Read",  F.asprintf "%a" AccessExpression.pp exp
+      | ContainerWrite {exp; pname} -> "Write", F.asprintf "%a" AccessExpression.pp exp
+      | InterfaceCall {exp; pname}  -> "Unk",   F.asprintf "%a" AccessExpression.pp exp
+    in
+    {Jsonbug_j.kind = access_mode
+    ; Jsonbug_j.exp = exp
+    }
 
   let mono_lang_pp = MF.wrap_monospaced pp_exp
 
@@ -224,6 +235,8 @@ module Acquisition = struct
 
   let pp fmt {lock} = Lock.pp fmt lock
 
+  let pp_json {lock} = F.asprintf "%a" Lock.pp lock
+
   let describe fmt {lock} = Lock.pp_locks fmt lock
 
   let make ~procname ~loc lock = {lock; loc; procname}
@@ -270,6 +283,10 @@ module Acquisitions = struct
       (fun acq acc ->
         match Acquisition.apply_subst subst acq with None -> acc | Some acq' -> add acq' acc )
       acqs empty
+
+  let pp_json acq =
+    List.map (elements acq) ~f:(fun a -> Acquisition.pp_json a)
+
 end
 
 module LockState : sig
@@ -787,10 +804,24 @@ module AccessSnapshot = struct
         Acquisitions.pp locks
         OwnershipAbstractValue.pp ownership_precondition
 
+    let pp_json {access; thread; locks; ownership_precondition} =
+      { Jsonbug_j.access = Access.pp_json access
+      ; thread = F.asprintf "%a" ThreadsDomain.pp thread
+      ; locks  = Acquisitions.pp_json locks
+      ; ownership_pre = F.asprintf "%a" OwnershipAbstractValue.pp ownership_precondition
+      }
+
     let describe fmt {access} = Access.describe fmt access
   end
 
   include ExplicitTrace.MakeTraceElemModuloLocation (AccessSnapshotElem) (CallPrinter)
+
+  let pp_json {elem; loc; trace} =
+    {
+      Jsonbug_j.elem = AccessSnapshotElem.pp_json elem
+    ; loc   = loc.Location.line 
+    ; trace =  List.map trace ~f:(fun t -> F.asprintf "%a" ExplicitTrace.DefaultCallPrinter.pp t)
+    }
 
   let is_write {elem= {access}} = Access.is_write access
 
@@ -858,6 +889,9 @@ module AccessDomain = struct
 
   let add_opt snapshot_opt astate =
     Option.fold snapshot_opt ~init:astate ~f:(fun acc s -> add s acc)
+
+   let pp_json domain = List.map (elements domain) ~f:(fun snapshot -> AccessSnapshot.pp_json snapshot)
+  
 end
 
 module OwnershipDomain = struct
@@ -1150,6 +1184,9 @@ let pp_summary fmt {threads; locks; critical_pairs; accesses; return_ownership; 
      Attributes: %a @\n"
     ThreadsDomain.pp threads LockDomain.pp locks CriticalPairs.pp critical_pairs AccessDomain.pp accesses OwnershipAbstractValue.pp
     return_ownership Attribute.pp return_attribute AttributeMapDomain.pp attributes
+
+let pp_summary_json { accesses; } = AccessDomain.pp_json accesses 
+
 
 let add_unannotated_call_access formals pname actuals loc (astate : t) =
   match actuals with

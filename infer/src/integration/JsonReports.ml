@@ -135,6 +135,7 @@ type json_issue_printer_typ =
   ; err_key: Errlog.err_key
   ; err_data: Errlog.err_data }
 
+
 let procedure_id_of_procname proc_name =
   match Procname.get_language proc_name with
   | Language.Java ->
@@ -298,7 +299,6 @@ module JsonFixesPrinter = MakeJsonListPrinter (struct
     else None
 end)
 
-
 module IssuesJson = struct
   include JsonIssuePrinter
 
@@ -318,7 +318,6 @@ module FixesJson = struct
       (fun err_key err_data -> pp fmt {error_filter; proc_name; proc_loc_opt; err_key; err_data})
       err_log
 end
-
 
 type json_costs_printer_typ =
   {loc: Location.t; proc_name: Procname.t; cost_opt: CostDomain.summary option}
@@ -381,6 +380,18 @@ let collect_issues summary issues_acc =
     err_log issues_acc
 
 
+let collect_racerdfix_summaries summary summaries_acc =
+  let fix_summ = Summary.get_payloads summary in
+  let {Payloads.racerdfix;} = fix_summ  in
+  let () = print_endline ">>>>>>>> ANDREEA racerd summaries:" in
+  let () = match racerdfix with
+    | None         -> ()
+    | Some fix_sum -> RacerDFixDomain.pp_summary Format.std_formatter fix_sum in
+ ()
+  (* Errlog.fold
+   *   (fun err_key err_data acc -> {Issue.proc_name; proc_location;} :: acc)
+   *   fix_summ summaries_acc  *)
+
 let write_costs summary (outfile : Utils.outfile) =
   let proc_name = Summary.get_proc_name summary in
   if not (Cost.is_report_suppressed proc_name) then
@@ -398,14 +409,15 @@ let write_lint_fixes filters (issues_outf : Utils.outfile) linereader procname e
   let error_filter = mk_error_filter filters procname in
   FixesJson.pp_issues_of_error_log issues_outf.fmt error_filter linereader None procname error_log
 
-
 (** Process a summary *)
 let process_summary ~costs_outf summary issues_acc =
   write_costs summary costs_outf ;
-  collect_issues summary issues_acc
+  (* write_summaries summary summaries_outf; *)
+  (* collect_racerdfix_summaries summary; *)
+  collect_issues summary issues_acc 
 
 
-let process_all_summaries_and_issues ~fixes_outf ~issues_outf ~costs_outf =
+let process_all_summaries_and_issues~fixes_outf ~issues_outf ~costs_outf =
   let linereader = LineReader.create () in
   let filters = Inferconfig.create_filters () in
   let all_issues = ref [] in
@@ -432,7 +444,6 @@ let process_all_summaries_and_issues ~fixes_outf ~issues_outf ~costs_outf =
   (* Issues that are generated and stored outside of summaries by linter and checkers *)
   List.iter (ResultsDirEntryName.get_issues_directories ()) ~f:(fun dir_name ->
       IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_fixes filters fixes_outf linereader) ) ;
-
   ()
 
 
@@ -458,3 +469,125 @@ let write_reports ~fixes_json ~issues_json ~costs_json =
   IssuesJson.pp_close issues_outf.fmt () ;
   Utils.close_outf issues_outf ;
   ()
+
+(* ========================================================= *)
+(* ========================================================= *)
+(* ========================================================= *)
+
+type json_summary_printer_typ =
+  { 
+    proc_name: Procname.t
+  ; proc_loc : Location.t
+  ; summary_opt : RacerDFixDomain.summary option;
+  }
+
+
+module JsonCostsSummaryPrinter = MakeJsonListPrinter (struct
+    type elt = json_summary_printer_typ
+
+    let to_string ({proc_name; proc_loc; summary_opt} : elt) =
+      let source_file, procedure_start_line =
+            (proc_loc.Location.file, proc_loc.Location.line)
+      in
+      if SourceFile.is_invalid source_file then
+        L.(die InternalError)
+          "Invalid source file for summaries."  ;
+      let file =
+        SourceFile.to_string ~force_relative:Config.report_force_relative_path source_file
+      in
+      let accesses = match summary_opt with
+        | None -> []
+        | Some sum -> RacerDFixDomain.pp_summary_json sum  
+      in
+      let summary =
+        { Jsonbug_j.filex = file
+        ; procedure= procedure_id_of_procname proc_name
+        ; accesses 
+        }
+      in
+      Some (Jsonbug_j.string_of_summary_racerd summary)
+end)
+
+let write_costs summary (outfile : Utils.outfile) =
+  let proc_name = Summary.get_proc_name summary in
+  let summaries = Summary.get_payloads summary in
+  let {Payloads.racerdfix;} = summaries  in
+  JsonCostsSummaryPrinter.pp outfile.fmt
+    {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
+
+
+let collect_summaries summary issues_acc =
+  let err_log = Summary.get_err_log summary in
+  let proc_name = Summary.get_proc_name summary in
+  let proc_location = Summary.get_loc summary in
+  Errlog.fold
+    (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
+    err_log issues_acc
+
+
+(** Process a summary *)
+let process_summary ~summaries_outf summary issues_acc =
+  write_costs summary summaries_outf;
+  (* write_summaries summary summaries_outf; *)
+  (* collect_racerdfix_summaries summary; *)
+  collect_summaries summary issues_acc
+
+
+let process_all_summaries  ~summaries_outf =
+  let linereader = LineReader.create () in
+  let filters = Inferconfig.create_filters () in
+  let all_issues = ref [] in
+  SpecsFiles.iter_from_config ~f:(fun summary ->
+      all_issues := process_summary ~summaries_outf summary !all_issues ) ;
+  all_issues := Issue.sort_filter_issues !all_issues ;
+  ()
+
+
+let write_summaries ~summaries_json =
+  let mk_outfile fname =
+    match Utils.create_outfile fname with
+    | None ->
+        L.die InternalError "Could not create '%s'." fname
+    | Some outf ->
+        outf
+  in
+  let summaries_outf = mk_outfile summaries_json in
+  JsonCostsSummaryPrinter.pp_open summaries_outf.fmt () ;
+  process_all_summaries ~summaries_outf ;
+  JsonCostsSummaryPrinter.pp_close summaries_outf.fmt () ;
+  Utils.close_outf summaries_outf ;
+  ()
+
+(* let write_summaries summary (outfile : Utils.outfile) =
+ *   let proc_name = Summary.get_proc_name summary in
+ *   JsonSummariesPrinter.pp outfile.fmt
+ *     {loc= Summary.get_loc summary; proc_name}
+ * 
+ * (\** Process a summary *\)
+ * let process_summary ~costs_outf summary issues_acc =
+ *   write_summaries summary summaries_outf
+ * 
+ * let process_all_summaries ~summaries_outf  =
+ *   let linereader = LineReader.create () in
+ *   let filters = Inferconfig.create_filters () in
+ *   let all_issues = ref [] in
+ *   SpecsFiles.iter_from_config ~f:(fun summary -> ()
+ *       all_issues := process_summary ~summaries_outf  summary !all_issues ) ;
+ *   all_issues := Issue.sort_filter_issues !all_issues ;
+ *   ()
+ * 
+ * 
+ * let write_summaries ~summaries_json =
+ *   let mk_outfile fname =
+ *     match Utils.create_outfile fname with
+ *     | None ->
+ *         L.die InternalError "Could not create '%s'." fname
+ *     | Some outf ->
+ *         outf
+ *   in
+ *   let summaries_outf = mk_outfile summaries_json in
+ *   JsonCostsPrinter.pp_open summaries_outf.fmt () ;
+ *   process_all_summaries ~summaries_outf ;
+ *   JsonCostsPrinter.pp_close summaries_outf.fmt () ;
+ *   Utils.close_outf summaries_outf ;
+ *   () *)

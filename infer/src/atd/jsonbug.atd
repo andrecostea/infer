@@ -104,6 +104,38 @@ type jsonfix = {
 type report_fix = jsonfix list
 
 
+type access_ty = {
+  kind: string;
+  exp: string
+}
+
+type elem_ty = {
+  access: access_ty;
+  thread: string;
+  locks: string list;
+  ownership_pre: string; 
+}
+
+type snapshot = {
+  elem: elem_ty;
+  loc: int;
+  trace: (* json_trace_item *) string list;
+}
+
+type summary_racerd = {
+  filex: string;
+  procedure: string;
+  accesses: snapshot list;
+}
+
+  (*
+  
+  ownership: string;
+  *)
+
+type report_summary = summary_racerd list
+
+
 type hum_info = {
   hum_polynomial : string;
   hum_degree : string;

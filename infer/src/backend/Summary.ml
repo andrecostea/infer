@@ -69,6 +69,8 @@ end
 
 let get_status summary = summary.status
 
+let get_payloads summary = summary.payloads
+
 let get_proc_desc summary = summary.proc_desc
 
 let get_attributes summary = Procdesc.get_attributes summary.proc_desc

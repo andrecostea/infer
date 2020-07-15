@@ -189,6 +189,10 @@ let report ?(suppress_console = false) () =
   let fixes_json  = ResultsDir.get_path ReportFixJson in
   let issues_json = ResultsDir.get_path ReportJson in
   JsonReports.write_reports ~fixes_json ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
+
+  let summaries_json = ResultsDir.get_path SummariesJson in
+  JsonReports.write_summaries ~summaries_json  ;
+
   (* Post-process the report according to the user config. By default, calls report.py to create a
      human-readable report.
 

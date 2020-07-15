@@ -55,6 +55,8 @@ val get_loc : t -> Location.t
 val get_status : t -> Status.t
 (** Return the status (active v.s. inactive) of a procedure summary *)
 
+val get_payloads : t -> Payloads.t
+
 val pp_html : SourceFile.t -> Format.formatter -> t -> unit
 (** Print the summary in html format *)
 

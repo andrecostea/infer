@@ -30,6 +30,7 @@ type id =
   | ReportHtml
   | ReportJson
   | ReportFixJson
+  | SummariesJson
   | ReportText
   | ReportXML
   | RetainCycles
@@ -152,6 +153,11 @@ let of_id = function
       ; before_caching_capture= Delete }
   | ReportFixJson ->
       { rel_path= "report_fix.json"
+      ; kind= File
+      ; before_incremental_analysis= Delete
+      ; before_caching_capture= Delete }
+  | SummariesJson ->
+      { rel_path= "racerdfix_sumaaries.json"
       ; kind= File
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Delete }
