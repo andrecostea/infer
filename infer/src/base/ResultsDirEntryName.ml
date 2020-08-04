@@ -157,7 +157,7 @@ let of_id = function
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Delete }
   | SummariesJson ->
-      { rel_path= "racerdfix_sumaaries.json"
+      { rel_path= "racerdfix_summaries.json"
       ; kind= File
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Delete }

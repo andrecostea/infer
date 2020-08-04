@@ -51,10 +51,10 @@ let spec_files_from_cmdline () =
 
 let spec_files_from_cmdline () =
   let result = spec_files_from_cmdline () in
-  let () = print_endline ">>>>>>>>> ANDREEA spec_files" in
-  let () = List.iter
-      ~f:(fun file -> print_endline file)
-      result in
+  (* let () = print_endline ">>>>>>>>> ANDREEA spec_files" in
+   * let () = List.iter
+   *     ~f:(fun file -> print_endline file)
+   *     result in *)
   result
 
 (** Create an iterator which loads spec files one at a time *)

@@ -788,18 +788,22 @@ let make_trace ~report_kind original_exp =
       (original_trace, original_end, None)
 
 
-let log_issue current_pname ~issue_log ~loc ~ltr ~access issue_type error_message =
-  Reporting.log_issue_external current_pname ~issue_log ~loc ~ltr ~access ~snapshot1:(Some("A1"))  ~snapshot2:(Some("B2")) issue_type error_message
+let log_issue current_pname ~issue_log ~loc ~ltr ~access
+    ?snapshot1:(snapshot1 = None)
+    ?snapshot2:(snapshot2 = None)
+    issue_type error_message =
+  Reporting.log_issue_external current_pname ~issue_log ~loc ~ltr ~access ~snapshot1  ~snapshot2 issue_type error_message
 
 (* TODO-ANDREEA add filename too *)
 type reported_access =
   { threads: RacerDFixDomain.ThreadsDomain.t
   ; snapshot: RacerDFixDomain.AccessSnapshot.t
+  ; snapshot_pair: RacerDFixDomain.AccessSnapshot.t option
   ; tenv: Tenv.t
   ; procname: Procname.t }
 
 let report_thread_safety_violation ~make_description ~report_kind
-    ({threads; snapshot; tenv; procname= pname} : reported_access) issue_log =
+    ({threads; snapshot; snapshot_pair; tenv; procname= pname} : reported_access) issue_log =
   let open RacerDFixDomain in
   let final_pname = List.last snapshot.trace |> Option.value_map ~default:pname ~f:CallSite.pname in
   let final_sink_site = CallSite.make final_pname snapshot.loc in
@@ -813,7 +817,12 @@ let report_thread_safety_violation ~make_description ~report_kind
   let error_message = F.sprintf "%s%s" description explanation in
   let end_locs = Option.to_list original_end @ Option.to_list conflict_end in
   let access = IssueAuxData.encode end_locs in
-  log_issue pname ~issue_log ~loc ~ltr ~access RacerDFix issue_type error_message
+  let snapshot1 = Some snapshot.elem.unique_id in
+  let snapshot2 = match snapshot_pair with
+    | None -> None
+    | Some pair -> Some pair.elem.unique_id
+  in
+  log_issue pname ~issue_log ~loc ~ltr ~access RacerDFix ~snapshot1 ~snapshot2 issue_type error_message
 
 
 let report_unannotated_interface_violation reported_pname reported_access issue_log =
@@ -1129,6 +1138,10 @@ let report_unsafe_accesses ~issue_log classname (aggregated_access_map : ReportM
           AccessSnapshot.is_unprotected snapshot
           && (Option.is_some conflict || ThreadsDomain.is_any threads)
         then
+          let reported_access =
+            match conflict with
+            | None -> reported_access
+            | Some conflict -> {reported_access with snapshot_pair = Some conflict} in
           report_thread_safety_violation ~acc ~make_description:make_unprotected_write_description
             ~report_kind:(WriteWriteRace conflict) reported_access
         else acc
@@ -1151,6 +1164,7 @@ let report_unsafe_accesses ~issue_log classname (aggregated_access_map : ReportM
                  make_read_write_race_description ~read_is_sync:false conflict
                in
                let report_kind = ReadWriteRace conflict.snapshot in
+               let reported_access = {reported_access with snapshot_pair = Some conflict.snapshot} in
                report_thread_safety_violation ~acc ~make_description ~report_kind reported_access )
     | (Read _ | ContainerRead _) when Procname.is_java pname ->
         (* protected read. report unprotected writes and opposite protected writes as conflicts *)
@@ -1170,6 +1184,7 @@ let report_unsafe_accesses ~issue_log classname (aggregated_access_map : ReportM
                let make_description =
                  make_read_write_race_description ~read_is_sync:true conflict
                in
+               let reported_access = {reported_access with snapshot_pair = Some conflict.snapshot} in
                let report_kind = ReadWriteRace conflict.snapshot in
                report_thread_safety_violation ~acc ~make_description ~report_kind reported_access )
     | Read _ | ContainerRead _ ->
@@ -1211,7 +1226,7 @@ let make_results_table exe_env summaries =
   let open RacerDFixDomain in
   let aggregate_post tenv procname acc {threads; accesses} =
     AccessDomain.fold
-      (fun snapshot acc -> ReportMap.add {threads; snapshot; tenv; procname} acc)
+      (fun snapshot acc -> ReportMap.add {threads; snapshot; snapshot_pair = None; tenv; procname} acc)
       accesses acc
   in
   List.fold summaries ~init:ReportMap.empty ~f:(fun acc (proc_desc, summary) ->
