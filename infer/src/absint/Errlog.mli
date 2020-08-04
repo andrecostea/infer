@@ -41,7 +41,7 @@ type node =
   | BackendNode of {node: Procdesc.Node.t}
 
 type err_key = private
-  {severity: IssueType.severity; issue_type: IssueType.t; err_desc: Localise.error_desc}
+  {severity: IssueType.severity; issue_type: IssueType.t; err_desc: Localise.error_desc;snapshot1: string option; snapshot2: string option}
 [@@deriving compare]
 
 (** Data associated to a specific error *)

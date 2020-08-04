@@ -789,9 +789,9 @@ let make_trace ~report_kind original_exp =
 
 
 let log_issue current_pname ~issue_log ~loc ~ltr ~access issue_type error_message =
-  Reporting.log_issue_external current_pname ~issue_log ~loc ~ltr ~access issue_type error_message
+  Reporting.log_issue_external current_pname ~issue_log ~loc ~ltr ~access ~snapshot1:(Some("A1"))  ~snapshot2:(Some("B2")) issue_type error_message
 
-
+(* TODO-ANDREEA add filename too *)
 type reported_access =
   { threads: RacerDFixDomain.ThreadsDomain.t
   ; snapshot: RacerDFixDomain.AccessSnapshot.t

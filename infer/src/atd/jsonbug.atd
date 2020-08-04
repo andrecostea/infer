@@ -62,6 +62,8 @@ type jsonbug = {
   ?censored_reason : string option;
   ?access : string option;
   ?extras : extra option;
+  ?snapshot1: string option;
+  ?snapshot2: string option;
 }
 
 type report = jsonbug list
@@ -120,10 +122,11 @@ type snapshot = {
   elem: elem_ty;
   loc: int;
   trace: (* json_trace_item *) string list;
+  hash: string;
 }
 
 type summary_racerd = {
-  filex: string;
+  file: string;
   procedure: string;
   accesses: snapshot list;
 }

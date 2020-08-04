@@ -54,8 +54,8 @@ let log_issue_from_summary ?severity_override proc_desc err_log ~node ~session ~
       checker exn
 
 
-let mk_issue_to_report issue_type error_message =
-  {IssueToReport.issue_type; description= Localise.verbatim_desc error_message; ocaml_pos= None}
+let mk_issue_to_report ?snapshot1:(snapshot1 = None) ?snapshot2:(snapshot2 = None) issue_type error_message =
+  {IssueToReport.issue_type; description= Localise.verbatim_desc error_message; ocaml_pos= None; snapshot1 = snapshot1; snapshot2 = snapshot2;}
 
 
 let log_issue_from_summary_simplified ?severity_override attrs err_log ~loc ?(ltr = []) ?extras
@@ -70,8 +70,9 @@ let log_issue attrs err_log ~loc ?ltr ?extras checker issue_type error_message =
 
 
 let log_issue_external procname ~issue_log ?severity_override ~loc ~ltr ?access ?extras checker
+    ?snapshot1:(snapshot1 = None) ?snapshot2:(snapshot2 = None)
     issue_type error_message =
-  let issue_to_report = mk_issue_to_report issue_type error_message in
+  let issue_to_report = mk_issue_to_report ~snapshot1 ~snapshot2 issue_type error_message in
   let issue_log, errlog = IssueLog.get_or_add issue_log ~proc:procname in
   let node = Errlog.UnknownNode in
   log_issue_from_errlog ?severity_override errlog ~loc ~node ~session:0 ~ltr ~access ~extras checker

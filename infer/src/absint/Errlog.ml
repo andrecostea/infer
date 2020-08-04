@@ -72,7 +72,7 @@ type node =
   | FrontendNode of {node_key: Procdesc.NodeKey.t}
   | BackendNode of {node: Procdesc.Node.t}
 
-type err_key = {severity: IssueType.severity; issue_type: IssueType.t; err_desc: Localise.error_desc}
+type err_key = {severity: IssueType.severity; issue_type: IssueType.t; err_desc: Localise.error_desc; snapshot1: string option; snapshot2: string option}
 [@@deriving compare]
 
 (** Data associated to a specific error *)
@@ -246,12 +246,13 @@ let log_issue ?severity_override err_log ~loc ~node ~session ~ltr ~linters_def_f
         ; access
         ; extras }
       in
-      let err_key = {severity; issue_type= error.issue_type; err_desc= error.description} in
+      let err_key = {severity; issue_type= error.issue_type; err_desc= error.description; snapshot1= error.snapshot1 ; snapshot2 = error.snapshot2} in
       add_issue err_log err_key (ErrDataSet.singleton err_data)
     in
     if added then (
       L.debug Analysis Medium "@\n%a@\n@?"
-        (IssueToReport.pp_err ~severity_override:severity loc error.issue_type error.description
+        (IssueToReport.pp_err ~severity_override:severity ~snapshot1:error.snapshot1
+           ~snapshot2:error.snapshot2 loc error.issue_type error.description
            error.ocaml_pos)
         () ;
       if not (IssueType.equal_severity severity Error) then (

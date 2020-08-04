@@ -46,6 +46,8 @@ val log_issue_external :
   -> ?access:string
   -> ?extras:Jsonbug_t.extra
   -> Checker.t
+  -> ?snapshot1: string option
+  -> ?snapshot2: string option
   -> IssueType.t
   -> string
   -> IssueLog.t

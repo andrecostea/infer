@@ -90,63 +90,103 @@ let recognize_exception exn : IssueToReport.t =
   | Abduction_case_not_implemented ocaml_pos ->
       { issue_type= IssueType.abduction_case_not_implemented
       ; description= Localise.no_desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Analysis_stops (desc, ocaml_pos_opt) ->
-      {issue_type= IssueType.biabduction_analysis_stops; description= desc; ocaml_pos= ocaml_pos_opt}
+      {issue_type= IssueType.biabduction_analysis_stops; description= desc; ocaml_pos= ocaml_pos_opt
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Array_of_pointsto ocaml_pos ->
       { issue_type= IssueType.array_of_pointsto
       ; description= Localise.no_desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Array_out_of_bounds_l1 (desc, ocaml_pos) ->
-      {issue_type= IssueType.array_out_of_bounds_l1; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.array_out_of_bounds_l1; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Array_out_of_bounds_l2 (desc, ocaml_pos) ->
-      {issue_type= IssueType.array_out_of_bounds_l2; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.array_out_of_bounds_l2; description= desc; ocaml_pos= Some ocaml_pos; snapshot1 = None
+      ; snapshot2 = None;}
   | Array_out_of_bounds_l3 (desc, ocaml_pos) ->
-      {issue_type= IssueType.array_out_of_bounds_l3; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.array_out_of_bounds_l3; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Assert_failure (f, l, c) ->
       let ocaml_pos = (f, l, c, c) in
       { issue_type= IssueType.assert_failure
       ; description= Localise.no_desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos ; snapshot1 = None
+      ; snapshot2 = None; }
   | Bad_footprint ocaml_pos ->
-      {issue_type= IssueType.bad_footprint; description= Localise.no_desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.bad_footprint; description= Localise.no_desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Cannot_star ocaml_pos ->
-      {issue_type= IssueType.cannot_star; description= Localise.no_desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.cannot_star; description= Localise.no_desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Class_cast_exception (desc, ocaml_pos) ->
-      {issue_type= IssueType.class_cast_exception; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.class_cast_exception; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Condition_always_true_false (desc, b, ocaml_pos) ->
       let issue_type =
         if b then IssueType.biabd_condition_always_true else IssueType.biabd_condition_always_false
       in
-      {issue_type; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Custom_error (error_msg, severity, desc) ->
       { issue_type= IssueType.register_from_string ~id:error_msg severity Biabduction
       ; description= desc
-      ; ocaml_pos= None }
+      ; ocaml_pos= None 
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Dangling_pointer_dereference (user_visible, desc, ocaml_pos) ->
       let issue_type =
         if user_visible then IssueType.dangling_pointer_dereference
         else IssueType.dangling_pointer_dereference_maybe
       in
-      {issue_type; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type; description= desc; ocaml_pos= Some ocaml_pos 
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Divide_by_zero (desc, ocaml_pos) ->
-      {issue_type= IssueType.divide_by_zero; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.divide_by_zero; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Empty_vector_access (desc, ocaml_pos) ->
-      {issue_type= IssueType.empty_vector_access; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.empty_vector_access; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Field_not_null_checked (desc, ocaml_pos) ->
-      {issue_type= IssueType.field_not_null_checked; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.field_not_null_checked; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Null_dereference (desc, ocaml_pos) ->
-      {issue_type= IssueType.null_dereference; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.null_dereference; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Null_test_after_dereference (desc, ocaml_pos) ->
       { issue_type= IssueType.null_test_after_dereference
       ; description= desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None; }
   | Pointer_size_mismatch (desc, ocaml_pos) ->
-      {issue_type= IssueType.pointer_size_mismatch; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.pointer_size_mismatch; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Inherently_dangerous_function desc ->
-      {issue_type= IssueType.inherently_dangerous_function; description= desc; ocaml_pos= None}
+      {issue_type= IssueType.inherently_dangerous_function; description= desc; ocaml_pos= None
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Internal_error desc ->
-      {issue_type= IssueType.internal_error; description= desc; ocaml_pos= None}
+      {issue_type= IssueType.internal_error; description= desc; ocaml_pos= None
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Leak (fp_part, (user_visible, error_desc), done_array_abstraction, resource, ocaml_pos) ->
       let issue_type =
         if done_array_abstraction then IssueType.leak_after_array_abstraction
@@ -163,45 +203,69 @@ let recognize_exception exn : IssueToReport.t =
           | PredSymb.Rignore ->
               IssueType.memory_leak
       in
-      {issue_type; description= error_desc; ocaml_pos= Some ocaml_pos}
+      {issue_type; description= error_desc; ocaml_pos= Some ocaml_pos 
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Missing_fld (fld, ocaml_pos) ->
       let desc = Localise.verbatim_desc (Fieldname.to_full_string fld) in
-      {issue_type= IssueType.missing_fld; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.missing_fld; description= desc; ocaml_pos= Some ocaml_pos 
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Premature_nil_termination (desc, ocaml_pos) ->
-      {issue_type= IssueType.premature_nil_termination; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.premature_nil_termination; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Parameter_not_null_checked (desc, ocaml_pos) ->
       { issue_type= IssueType.parameter_not_null_checked
       ; description= desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None; }
   | Precondition_not_found (desc, ocaml_pos) ->
-      {issue_type= IssueType.precondition_not_found; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.precondition_not_found; description= desc; ocaml_pos= Some ocaml_pos 
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Precondition_not_met (desc, ocaml_pos) ->
-      {issue_type= IssueType.precondition_not_met; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.precondition_not_met; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Retain_cycle (desc, ocaml_pos) ->
-      {issue_type= IssueType.retain_cycle; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.retain_cycle; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | SymOp.Analysis_failure_exe _ ->
-      {issue_type= IssueType.failure_exe; description= Localise.no_desc; ocaml_pos= None}
+      {issue_type= IssueType.failure_exe; description= Localise.no_desc; ocaml_pos= None
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Skip_function desc ->
-      {issue_type= IssueType.skip_function; description= desc; ocaml_pos= None}
+      {issue_type= IssueType.skip_function; description= desc; ocaml_pos= None; snapshot1= None; snapshot2= None}
   | Skip_pointer_dereference (desc, ocaml_pos) ->
-      {issue_type= IssueType.skip_pointer_dereference; description= desc; ocaml_pos= Some ocaml_pos}
+      {issue_type= IssueType.skip_pointer_dereference; description= desc; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Symexec_memory_error ocaml_pos ->
       { issue_type= IssueType.symexec_memory_error
       ; description= Localise.no_desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Unary_minus_applied_to_unsigned_expression (desc, ocaml_pos) ->
       { issue_type= IssueType.unary_minus_applied_to_unsigned_expression
       ; description= desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | Wrong_argument_number ocaml_pos ->
       { issue_type= IssueType.wrong_argument_number
       ; description= Localise.no_desc
-      ; ocaml_pos= Some ocaml_pos }
+      ; ocaml_pos= Some ocaml_pos
+      ; snapshot1 = None
+      ; snapshot2 = None;}
   | exn ->
       { issue_type= IssueType.failure_exe
       ; description=
           Localise.verbatim_desc (F.asprintf "%a: %s" Exn.pp exn (Caml.Printexc.get_backtrace ()))
-      ; ocaml_pos= None }
+      ; ocaml_pos= None; snapshot1= None; snapshot2= None }
 
 
 (** print a description of the exception to the html output *)

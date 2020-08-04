@@ -297,7 +297,9 @@ let issue_of_cost kind CostIssues.{complexity_increase_issue; unreachable_issue;
       ; traceview_id= None
       ; censored_reason= JsonReports.censored_reason issue_type source_file
       ; access= None
-      ; extras= None }
+      ; extras= None
+      ; snapshot1 = None
+      ; snapshot2 = None}
   else None
 
 

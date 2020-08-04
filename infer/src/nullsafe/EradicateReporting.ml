@@ -14,7 +14,7 @@ let report_error {IntraproceduralAnalysis.proc_desc; tenv; err_log} checker kind
   else
     let localized_description = Localise.verbatim_desc description in
     let issue_to_report =
-      {IssueToReport.issue_type= kind; description= localized_description; ocaml_pos= None}
+      {IssueToReport.issue_type= kind; description= localized_description; ocaml_pos= None; snapshot1 = None; snapshot2 = None;}
     in
     let trace = [Errlog.make_trace_element 0 loc description []] in
     let node = AnalysisState.get_node_exn () in

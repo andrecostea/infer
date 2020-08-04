@@ -200,7 +200,8 @@ module AccessSnapshot : sig
       ; lock: bool
       ; locks: Acquisitions.t  (* @ for racerdifx *)
       ; critical_pair: CriticalPair.t option (* @ for racerdifx *)
-      ; ownership_precondition: OwnershipAbstractValue.t }
+      ; ownership_precondition: OwnershipAbstractValue.t
+      ; unique_id: string}
   end
 
   include ExplicitTrace.TraceElem with type elem_t = AccessSnapshotElem.t

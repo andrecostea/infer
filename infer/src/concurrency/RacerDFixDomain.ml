@@ -110,9 +110,9 @@ module Access = struct
     match access with
       | Read {exp}  -> "Read",  F.asprintf "%a" AccessExpression.pp exp
       | Write {exp} -> "Write", F.asprintf "%a" AccessExpression.pp exp
-      | ContainerRead {exp; pname}  -> "Read",  F.asprintf "%a" AccessExpression.pp exp
-      | ContainerWrite {exp; pname} -> "Write", F.asprintf "%a" AccessExpression.pp exp
-      | InterfaceCall {exp; pname}  -> "Unk",   F.asprintf "%a" AccessExpression.pp exp
+      | ContainerRead {exp; _}  -> "Read",  F.asprintf "%a" AccessExpression.pp exp
+      | ContainerWrite {exp; _} -> "Write", F.asprintf "%a" AccessExpression.pp exp
+      | InterfaceCall {exp; _}  -> "Unk",   F.asprintf "%a" AccessExpression.pp exp
     in
     {Jsonbug_j.kind = access_mode
     ; Jsonbug_j.exp = exp
@@ -791,7 +791,9 @@ module AccessSnapshot = struct
       ; lock: bool
       ; locks: Acquisitions.t
       ; critical_pair: CriticalPair.t option
-      ; ownership_precondition: OwnershipAbstractValue.t }
+      ; ownership_precondition: OwnershipAbstractValue.t
+      ; unique_id: string
+      }
     [@@deriving compare]
 
     (* let pp_critical_pair fmt pair = match pair with
@@ -821,6 +823,7 @@ module AccessSnapshot = struct
       Jsonbug_j.elem = AccessSnapshotElem.pp_json elem
     ; loc   = loc.Location.line 
     ; trace =  List.map trace ~f:(fun t -> F.asprintf "%a" ExplicitTrace.DefaultCallPrinter.pp t)
+    ; hash   = elem.unique_id
     }
 
   let is_write {elem= {access}} = Access.is_write access
@@ -835,8 +838,9 @@ module AccessSnapshot = struct
     else None
 
 
-  let make_if_not_owned formals access lock locks critical_pair thread ownership_precondition loc =
-    make {access; lock; locks; critical_pair; thread; ownership_precondition} loc |> filter formals
+  let make_if_not_owned formals access lock locks critical_pair thread ownership_precondition  loc =
+    let unique_id = Utils.better_hash (formals,access,locks,thread,loc) |> Caml.Digest.to_hex in
+    make {access; lock; locks; critical_pair; thread; ownership_precondition; unique_id} loc |> filter formals
 
 
   let make_unannotated_call_access formals exp pname lock locks critical_pair ownership loc =

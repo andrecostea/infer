@@ -215,7 +215,9 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
         ; traceview_id= None
         ; censored_reason= censored_reason err_key.issue_type source_file
         ; access= err_data.access
-        ; extras= err_data.extras }
+        ; extras= err_data.extras
+        ; snapshot1 = err_key.snapshot1
+        ; snapshot2 = err_key.snapshot2}
       in
       Some (Jsonbug_j.string_of_jsonbug bug)
     else None
@@ -380,14 +382,14 @@ let collect_issues summary issues_acc =
     err_log issues_acc
 
 
-let collect_racerdfix_summaries summary summaries_acc =
-  let fix_summ = Summary.get_payloads summary in
-  let {Payloads.racerdfix;} = fix_summ  in
-  let () = print_endline ">>>>>>>> ANDREEA racerd summaries:" in
-  let () = match racerdfix with
-    | None         -> ()
-    | Some fix_sum -> RacerDFixDomain.pp_summary Format.std_formatter fix_sum in
- ()
+(* let collect_racerdfix_summaries summary summaries_acc =
+ *   let fix_summ = Summary.get_payloads summary in
+ *   let {Payloads.racerdfix;} = fix_summ  in
+ *   let () = print_endline ">>>>>>>> ANDREEA racerd summaries:" in
+ *   let () = match racerdfix with
+ *     | None         -> ()
+ *     | Some fix_sum -> RacerDFixDomain.pp_summary Format.std_formatter fix_sum in
+ *  () *)
   (* Errlog.fold
    *   (fun err_key err_data acc -> {Issue.proc_name; proc_location;} :: acc)
    *   fix_summ summaries_acc  *)
@@ -486,7 +488,7 @@ module JsonCostsSummaryPrinter = MakeJsonListPrinter (struct
     type elt = json_summary_printer_typ
 
     let to_string ({proc_name; proc_loc; summary_opt} : elt) =
-      let source_file, procedure_start_line =
+      let source_file, _ =
             (proc_loc.Location.file, proc_loc.Location.line)
       in
       if SourceFile.is_invalid source_file then
@@ -500,7 +502,7 @@ module JsonCostsSummaryPrinter = MakeJsonListPrinter (struct
         | Some sum -> RacerDFixDomain.pp_summary_json sum  
       in
       let summary =
-        { Jsonbug_j.filex = file
+        { Jsonbug_j.file = file
         ; procedure= procedure_id_of_procname proc_name
         ; accesses 
         }
@@ -534,8 +536,8 @@ let process_summary ~summaries_outf summary issues_acc =
 
 
 let process_all_summaries  ~summaries_outf =
-  let linereader = LineReader.create () in
-  let filters = Inferconfig.create_filters () in
+  (* let linereader = LineReader.create () in *)
+  (* let filters = Inferconfig.create_filters () in *)
   let all_issues = ref [] in
   SpecsFiles.iter_from_config ~f:(fun summary ->
       all_issues := process_summary ~summaries_outf summary !all_issues ) ;

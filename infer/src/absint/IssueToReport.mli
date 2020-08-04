@@ -12,10 +12,14 @@ module L = Logging
 type t =
   { issue_type: IssueType.t
   ; description: Localise.error_desc
-  ; ocaml_pos: L.ocaml_pos option  (** location in the infer source code *) }
+  ; ocaml_pos: L.ocaml_pos option  (** location in the infer source code *)
+  ; snapshot1: string option
+  ; snapshot2: string option}
 
 val pp_err :
-     ?severity_override:IssueType.severity
+  ?severity_override:IssueType.severity
+  -> ?snapshot1: string option
+  -> ?snapshot2: string option
   -> Location.t
   -> IssueType.t
   -> Localise.error_desc
