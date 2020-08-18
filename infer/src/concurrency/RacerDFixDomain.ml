@@ -806,7 +806,7 @@ module AccessSnapshot = struct
         Acquisitions.pp locks
         OwnershipAbstractValue.pp ownership_precondition
 
-    let pp_json {access; thread; locks; ownership_precondition} =
+    let pp_json {access; thread; lock; locks; ownership_precondition} =
       { Jsonbug_j.access = Access.pp_json access
       ; thread = F.asprintf "%a" ThreadsDomain.pp thread
       ; locks  = Acquisitions.pp_json locks
@@ -872,7 +872,7 @@ module AccessSnapshot = struct
       ThreadsDomain.integrate_summary ~callee_astate:snapshot.elem.thread ~caller_astate:threads
     in
     let lock = snapshot.elem.lock || LockDomain.is_locked lock in
-    let locks = LockState.get_acquisitions lock_state in
+    let locks = Acquisitions.union snapshot.elem.locks (LockState.get_acquisitions lock_state) in
     (* ANDREEA-TODO: join critical_pairs*)
     with_callsite snapshot callsite
     |> map ~f:(fun elem -> {elem with lock; thread; locks; critical_pair; ownership_precondition})
