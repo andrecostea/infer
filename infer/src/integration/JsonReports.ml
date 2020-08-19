@@ -417,7 +417,7 @@ let write_summaries ~summaries_json =
     | Some outf ->
         outf
   in
-  let summaries_outf = mk_outfile (summaries_json ^ "/summaries.json") in
+  let summaries_outf = mk_outfile summaries_json in
   JsonSummaryPrinter.pp_open summaries_outf.fmt () ;
   process_all_summaries ~summaries_outf ;
   JsonSummaryPrinter.pp_close summaries_outf.fmt () ;

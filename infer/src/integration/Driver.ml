@@ -185,7 +185,6 @@ let execute_analyze ~changed_files =
 
 
 let report ?(suppress_console = false) () =
-  (* let () = print_endline ">>>> ANDREEA: report" in *)
   let issues_json = ResultsDir.get_path ReportJson in
   JsonReports.write_reports ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
 
