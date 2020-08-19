@@ -189,7 +189,7 @@ let report ?(suppress_console = false) () =
   let issues_json = ResultsDir.get_path ReportJson in
   JsonReports.write_reports ~issues_json ~costs_json:(ResultsDir.get_path ReportCostsJson) ;
 
-  let summaries_json = ResultsDir.get_path Specs (* SummariesJson *) in
+  let summaries_json = ResultsDir.get_path SummariesJson in
   JsonReports.write_summaries ~summaries_json  ;
 
   (* Post-process the report according to the user config. By default, calls report.py to create a

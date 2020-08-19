@@ -396,16 +396,6 @@ let write_summary summary (outfile : Utils.outfile) =
   JsonSummaryPrinter.pp outfile.fmt
     {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
 
-
-(* let collect_summaries summary issues_acc =
- *   let err_log = Summary.get_err_log summary in
- *   let proc_name = Summary.get_proc_name summary in
- *   let proc_location = Summary.get_loc summary in
- *   Errlog.fold
- *     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
- *     err_log issues_acc *)
-
-
 (** Process a summary *)
 let process_summary ~summaries_outf summary =
   write_summary summary summaries_outf
@@ -413,8 +403,6 @@ let process_summary ~summaries_outf summary =
 
 
 let process_all_summaries  ~summaries_outf =
-  (* let linereader = LineReader.create () in *)
-  (* let filters = Inferconfig.create_filters () in *)
   let all_issues = ref [] in
   SpecsFiles.iter_from_config ~f:(fun summary ->
       process_summary ~summaries_outf summary ) ;
