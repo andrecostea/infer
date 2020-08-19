@@ -223,96 +223,8 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
     else None
 end)
 
-module JsonFixesPrinter = MakeJsonListPrinter (struct
-  type elt = json_issue_printer_typ
-
-  let to_string ({error_filter; proc_name; proc_loc_opt; err_key; err_data} : elt) =
-    let source_file, procedure_start_line =
-      match proc_loc_opt with
-      | Some proc_loc ->
-          (proc_loc.Location.file, proc_loc.Location.line)
-      | None ->
-          (err_data.loc.Location.file, 0)
-    in
-    if SourceFile.is_invalid source_file then
-      L.(die InternalError)
-        "Invalid source file for %a %a@.Trace: %a@." IssueType.pp err_key.issue_type
-        Localise.pp_error_desc err_key.err_desc Errlog.pp_loc_trace err_data.loc_trace ;
-    let should_report_source_file =
-      (not (SourceFile.is_biabduction_model source_file))
-      || Config.debug_mode || Config.debug_exceptions
-    in
-    if
-      error_filter source_file err_key.issue_type
-      && should_report_source_file
-      && should_report err_key.issue_type err_key.err_desc
-    then
-      let severity = IssueType.string_of_severity err_key.severity in
-      let bug_type = err_key.issue_type.unique_id in
-      let file =
-        SourceFile.to_string ~force_relative:Config.report_force_relative_path source_file
-      in
-      let json_ml_loc =
-        match err_data.loc_in_ml_source with
-        | Some (file, lnum, cnum, enum) when Config.reports_include_ml_loc ->
-            Some Jsonbug_j.{file; lnum; cnum; enum}
-        | _ ->
-            None
-      in
-      let qualifier =
-        let base_qualifier = error_desc_to_plain_string err_key.err_desc in
-        if IssueType.(equal resource_leak) err_key.issue_type then
-          match Errlog.compute_local_exception_line err_data.loc_trace with
-          | None ->
-              base_qualifier
-          | Some line ->
-              let potential_exception_message =
-                Format.asprintf "%a: %s %d" MarkupFormatter.pp_bold "Note"
-                  potential_exception_message line
-              in
-              Format.sprintf "%s@\n%s" base_qualifier potential_exception_message
-        else base_qualifier
-      in
-      let bug =
-        { Jsonbug_j.bug_type
-        ; qualifier
-        ; severity
-        ; line= err_data.loc.Location.line
-        ; column= err_data.loc.Location.col
-        ; procedure= procedure_id_of_procname proc_name
-        ; procedure_start_line
-        ; file
-        ; patches = []
-        ; bug_trace= loc_trace_to_jsonbug_record err_data.loc_trace err_key.severity
-        ; node_key= Option.map ~f:Procdesc.NodeKey.to_string err_data.node_key
-        ; key= compute_key bug_type proc_name file
-        ; hash= compute_hash ~severity ~bug_type ~proc_name ~file ~qualifier
-        ; dotty= error_desc_to_dotty_string err_key.err_desc
-        ; infer_source_loc= json_ml_loc
-        ; bug_type_hum= err_key.issue_type.hum
-        ; linters_def_file= err_data.linters_def_file
-        ; doc_url= err_data.doc_url
-        ; traceview_id= None
-        ; censored_reason= censored_reason err_key.issue_type source_file
-        ; access= err_data.access
-        ; extras= err_data.extras }
-      in
-      Some (Jsonbug_j.string_of_jsonfix bug)
-    else None
-end)
-
 module IssuesJson = struct
   include JsonIssuePrinter
-
-  (** Write bug report in JSON format *)
-  let pp_issues_of_error_log fmt error_filter _ proc_loc_opt proc_name err_log =
-    Errlog.iter
-      (fun err_key err_data -> pp fmt {error_filter; proc_name; proc_loc_opt; err_key; err_data})
-      err_log
-end
-
-module FixesJson = struct
-  include JsonFixesPrinter
 
   (** Write bug report in JSON format *)
   let pp_issues_of_error_log fmt error_filter _ proc_loc_opt proc_name err_log =
@@ -381,19 +293,6 @@ let collect_issues summary issues_acc =
     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
     err_log issues_acc
 
-
-(* let collect_racerdfix_summaries summary summaries_acc =
- *   let fix_summ = Summary.get_payloads summary in
- *   let {Payloads.racerdfix;} = fix_summ  in
- *   let () = print_endline ">>>>>>>> ANDREEA racerd summaries:" in
- *   let () = match racerdfix with
- *     | None         -> ()
- *     | Some fix_sum -> RacerDFixDomain.pp_summary Format.std_formatter fix_sum in
- *  () *)
-  (* Errlog.fold
-   *   (fun err_key err_data acc -> {Issue.proc_name; proc_location;} :: acc)
-   *   fix_summ summaries_acc  *)
-
 let write_costs summary (outfile : Utils.outfile) =
   let proc_name = Summary.get_proc_name summary in
   if not (Cost.is_report_suppressed proc_name) then
@@ -406,11 +305,6 @@ let write_lint_issues filters (issues_outf : Utils.outfile) linereader procname 
   let error_filter = mk_error_filter filters procname in
   IssuesJson.pp_issues_of_error_log issues_outf.fmt error_filter linereader None procname error_log
 
-(** Process lint issues of a procedure *)
-let write_lint_fixes filters (issues_outf : Utils.outfile) linereader procname error_log =
-  let error_filter = mk_error_filter filters procname in
-  FixesJson.pp_issues_of_error_log issues_outf.fmt error_filter linereader None procname error_log
-
 (** Process a summary *)
 let process_summary ~costs_outf summary issues_acc =
   write_costs summary costs_outf ;
@@ -419,7 +313,7 @@ let process_summary ~costs_outf summary issues_acc =
   collect_issues summary issues_acc 
 
 
-let process_all_summaries_and_issues~fixes_outf ~issues_outf ~costs_outf =
+let process_all_summaries_and_issues ~issues_outf ~costs_outf =
   let linereader = LineReader.create () in
   let filters = Inferconfig.create_filters () in
   let all_issues = ref [] in
@@ -435,21 +329,10 @@ let process_all_summaries_and_issues~fixes_outf ~issues_outf ~costs_outf =
   (* Issues that are generated and stored outside of summaries by linter and checkers *)
   List.iter (ResultsDirEntryName.get_issues_directories ()) ~f:(fun dir_name ->
       IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_issues filters issues_outf linereader) ) ;
-
-  (* ANDREEA: process fixes *)
-  List.iter
-    ~f:(fun {Issue.proc_name; proc_location; err_key; err_data} ->
-        let error_filter = mk_error_filter filters proc_name in
-        FixesJson.pp fixes_outf.Utils.fmt
-          {error_filter; proc_name; proc_loc_opt= Some proc_location; err_key; err_data} )
-    !all_issues ;
-  (* Issues that are generated and stored outside of summaries by linter and checkers *)
-  List.iter (ResultsDirEntryName.get_issues_directories ()) ~f:(fun dir_name ->
-      IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_fixes filters fixes_outf linereader) ) ;
   ()
 
 
-let write_reports ~fixes_json ~issues_json ~costs_json =
+let write_reports ~issues_json ~costs_json =
   let mk_outfile fname =
     match Utils.create_outfile fname with
     | None ->
@@ -457,17 +340,13 @@ let write_reports ~fixes_json ~issues_json ~costs_json =
     | Some outf ->
         outf
   in
-  let fixes_outf = mk_outfile fixes_json in
-  IssuesJson.pp_open fixes_outf.fmt () ;
   let issues_outf = mk_outfile issues_json in
   IssuesJson.pp_open issues_outf.fmt () ;
   let costs_outf = mk_outfile costs_json in
   JsonCostsPrinter.pp_open costs_outf.fmt () ;
-  process_all_summaries_and_issues ~fixes_outf ~issues_outf ~costs_outf ;
+  process_all_summaries_and_issues  ~issues_outf ~costs_outf ;
   JsonCostsPrinter.pp_close costs_outf.fmt () ;
   Utils.close_outf costs_outf ;
-  IssuesJson.pp_close fixes_outf.fmt () ;
-  Utils.close_outf fixes_outf ;
   IssuesJson.pp_close issues_outf.fmt () ;
   Utils.close_outf issues_outf ;
   ()
@@ -484,7 +363,7 @@ type json_summary_printer_typ =
   }
 
 
-module JsonCostsSummaryPrinter = MakeJsonListPrinter (struct
+module JsonSummaryPrinter = MakeJsonListPrinter (struct
     type elt = json_summary_printer_typ
 
     let to_string ({proc_name; proc_loc; summary_opt} : elt) =
@@ -510,29 +389,27 @@ module JsonCostsSummaryPrinter = MakeJsonListPrinter (struct
       Some (Jsonbug_j.string_of_summary_racerd summary)
 end)
 
-let write_costs summary (outfile : Utils.outfile) =
+let write_summary summary (outfile : Utils.outfile) =
   let proc_name = Summary.get_proc_name summary in
   let summaries = Summary.get_payloads summary in
   let {Payloads.racerdfix;} = summaries  in
-  JsonCostsSummaryPrinter.pp outfile.fmt
+  JsonSummaryPrinter.pp outfile.fmt
     {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
 
 
-let collect_summaries summary issues_acc =
-  let err_log = Summary.get_err_log summary in
-  let proc_name = Summary.get_proc_name summary in
-  let proc_location = Summary.get_loc summary in
-  Errlog.fold
-    (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
-    err_log issues_acc
+(* let collect_summaries summary issues_acc =
+ *   let err_log = Summary.get_err_log summary in
+ *   let proc_name = Summary.get_proc_name summary in
+ *   let proc_location = Summary.get_loc summary in
+ *   Errlog.fold
+ *     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
+ *     err_log issues_acc *)
 
 
 (** Process a summary *)
-let process_summary ~summaries_outf summary issues_acc =
-  write_costs summary summaries_outf;
-  (* write_summaries summary summaries_outf; *)
-  (* collect_racerdfix_summaries summary; *)
-  collect_summaries summary issues_acc
+let process_summary ~summaries_outf summary =
+  write_summary summary summaries_outf
+  (*  collect_summaries summary issues_acc *)
 
 
 let process_all_summaries  ~summaries_outf =
@@ -540,8 +417,7 @@ let process_all_summaries  ~summaries_outf =
   (* let filters = Inferconfig.create_filters () in *)
   let all_issues = ref [] in
   SpecsFiles.iter_from_config ~f:(fun summary ->
-      all_issues := process_summary ~summaries_outf summary !all_issues ) ;
-  all_issues := Issue.sort_filter_issues !all_issues ;
+      process_summary ~summaries_outf summary ) ;
   ()
 
 
@@ -553,28 +429,41 @@ let write_summaries ~summaries_json =
     | Some outf ->
         outf
   in
-  let summaries_outf = mk_outfile summaries_json in
-  JsonCostsSummaryPrinter.pp_open summaries_outf.fmt () ;
+  let summaries_outf = mk_outfile (summaries_json ^ "/summaries.json") in
+  JsonSummaryPrinter.pp_open summaries_outf.fmt () ;
   process_all_summaries ~summaries_outf ;
-  JsonCostsSummaryPrinter.pp_close summaries_outf.fmt () ;
+  JsonSummaryPrinter.pp_close summaries_outf.fmt () ;
   Utils.close_outf summaries_outf ;
   ()
 
-(* let write_summaries summary (outfile : Utils.outfile) =
+
+(* let write_summary summary (outfile : Utils.outfile) =
  *   let proc_name = Summary.get_proc_name summary in
- *   JsonSummariesPrinter.pp outfile.fmt
- *     {loc= Summary.get_loc summary; proc_name}
+ *   let summaries = Summary.get_payloads summary in
+ *   let {Payloads.racerdfix;} = summaries  in
+ *   JsonSummaryPrinter.pp outfile.fmt
+ *     {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
+ * 
+ * 
+ * let collect_summaries summary issues_acc =
+ *   let err_log = Summary.get_err_log summary in
+ *   let proc_name = Summary.get_proc_name summary in
+ *   let proc_location = Summary.get_loc summary in
+ *   Errlog.fold
+ *     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
+ *     err_log issues_acc
+ * 
  * 
  * (\** Process a summary *\)
- * let process_summary ~costs_outf summary issues_acc =
- *   write_summaries summary summaries_outf
+ * let process_summary ~summaries_outf summary issues_acc =
+ *   write_summary summary summaries_outf;
+ *   collect_summaries summary issues_acc
  * 
- * let process_all_summaries ~summaries_outf  =
- *   let linereader = LineReader.create () in
- *   let filters = Inferconfig.create_filters () in
+ * 
+ * let process_all_summaries  ~summaries_outf =
  *   let all_issues = ref [] in
- *   SpecsFiles.iter_from_config ~f:(fun summary -> ()
- *       all_issues := process_summary ~summaries_outf  summary !all_issues ) ;
+ *   SpecsFiles.iter_from_config ~f:(fun summary ->
+ *       all_issues := process_summary ~summaries_outf summary !all_issues ) ;
  *   all_issues := Issue.sort_filter_issues !all_issues ;
  *   ()
  * 
@@ -587,9 +476,9 @@ let write_summaries ~summaries_json =
  *     | Some outf ->
  *         outf
  *   in
- *   let summaries_outf = mk_outfile summaries_json in
- *   JsonCostsPrinter.pp_open summaries_outf.fmt () ;
+ *   let summaries_outf = mk_outfile (summaries_json ^ "/summaries.json") in
+ *   JsonSummaryPrinter.pp_open summaries_outf.fmt () ;
  *   process_all_summaries ~summaries_outf ;
- *   JsonCostsPrinter.pp_close summaries_outf.fmt () ;
+ *   JsonSummaryPrinter.pp_close summaries_outf.fmt () ;
  *   Utils.close_outf summaries_outf ;
  *   () *)

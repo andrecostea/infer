@@ -806,7 +806,7 @@ module AccessSnapshot = struct
         Acquisitions.pp locks
         OwnershipAbstractValue.pp ownership_precondition
 
-    let pp_json {access; thread; lock; locks; ownership_precondition} =
+    let pp_json {access; thread; locks; ownership_precondition} =
       { Jsonbug_j.access = Access.pp_json access
       ; thread = F.asprintf "%a" ThreadsDomain.pp thread
       ; locks  = Acquisitions.pp_json locks

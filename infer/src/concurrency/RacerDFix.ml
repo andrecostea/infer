@@ -1180,7 +1180,7 @@ let report_unsafe_accesses ~issue_log classname (aggregated_access_map : ReportM
         in
         List.find accesses ~f:is_conflict
         |> Option.value_map ~default:acc ~f:(fun conflict ->
-               (* protected read with conflicting unprotected write(s). warn. *)
+            (* protected read with conflicting unprotected write(s). warn. *)
                let make_description =
                  make_read_write_race_description ~read_is_sync:true conflict
                in

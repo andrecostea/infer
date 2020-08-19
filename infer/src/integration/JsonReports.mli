@@ -14,7 +14,7 @@ val loc_trace_to_jsonbug_record :
 
 val censored_reason : IssueType.t -> SourceFile.t -> string option
 
-val write_reports : fixes_json:string -> issues_json:string -> costs_json:string -> unit
+val write_reports : issues_json:string -> costs_json:string -> unit
 
 val write_summaries : summaries_json:string -> unit
     
