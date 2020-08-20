@@ -425,48 +425,54 @@ let write_summaries ~summaries_json =
   ()
 
 
-(* let write_summary summary (outfile : Utils.outfile) =
- *   let proc_name = Summary.get_proc_name summary in
- *   let summaries = Summary.get_payloads summary in
- *   let {Payloads.racerdfix;} = summaries  in
- *   JsonSummaryPrinter.pp outfile.fmt
- *     {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
- * 
- * 
- * let collect_summaries summary issues_acc =
- *   let err_log = Summary.get_err_log summary in
- *   let proc_name = Summary.get_proc_name summary in
- *   let proc_location = Summary.get_loc summary in
- *   Errlog.fold
- *     (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
- *     err_log issues_acc
- * 
- * 
- * (\** Process a summary *\)
- * let process_summary ~summaries_outf summary issues_acc =
- *   write_summary summary summaries_outf;
- *   collect_summaries summary issues_acc
- * 
- * 
- * let process_all_summaries  ~summaries_outf =
- *   let all_issues = ref [] in
- *   SpecsFiles.iter_from_config ~f:(fun summary ->
- *       all_issues := process_summary ~summaries_outf summary !all_issues ) ;
- *   all_issues := Issue.sort_filter_issues !all_issues ;
- *   ()
- * 
- * 
- * let write_summaries ~summaries_json =
- *   let mk_outfile fname =
- *     match Utils.create_outfile fname with
- *     | None ->
- *         L.die InternalError "Could not create '%s'." fname
- *     | Some outf ->
- *         outf
- *   in
- *   let summaries_outf = mk_outfile (summaries_json ^ "/summaries.json") in
- *   JsonSummaryPrinter.pp_open summaries_outf.fmt () ;
- *   process_all_summaries ~summaries_outf ;
- *   JsonSummaryPrinter.pp_close summaries_outf.fmt () ;
- *   Utils.close_outf summaries_outf ;
- *   () *)
+(* ***************************************** *)
+
+let write_summary summary (outfile : Utils.outfile) =
+  let proc_name = Summary.get_proc_name summary in
+  let summaries = Summary.get_payloads summary in
+  let {Payloads.racerdfix;} = summaries  in
+  JsonSummaryPrinter.pp outfile.fmt
+    {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
+
+(** Process a summary *)
+let process_summary ~summaries_outf summary =
+  write_summary summary summaries_outf
+  (*  collect_summaries summary issues_acc *)
+
+
+let process_all_summaries ~summaries_json =
+  let all_issues = ref [] in
+  let mk_outfile fname =
+    match Utils.create_outfile fname with
+    | None ->
+        L.die InternalError "Could not create '%s'." fname
+    | Some outf ->
+        outf
+  in
+  let file = ref "" in
+  let outf = ref (mk_outfile (summaries_json ^ "/init.txt")) in
+  JsonSummaryPrinter.pp_open !outf.fmt () ;
+  SpecsFiles.iter_from_config ~f:(fun summary ->
+        let proc_loc = Summary.get_loc summary in
+        let sfile =
+          SourceFile.to_string ~force_relative:Config.report_force_relative_path (proc_loc.Location.file) in
+        if (String.compare !file sfile != 0) then
+          begin
+            JsonSummaryPrinter.pp_close !outf.fmt () ;
+            Utils.close_outf !outf ;
+            file := sfile;
+            outf := mk_outfile (summaries_json ^ "/" ^ (String.tr '/' '_' sfile)) ;
+            JsonSummaryPrinter.pp_open !outf.fmt () ;
+          end ;
+        let summaries_outf = !outf in
+        process_summary ~summaries_outf summary;
+    ) ;
+  JsonSummaryPrinter.pp_close !outf.fmt () ;
+  Utils.close_outf !outf ;
+  ()
+
+
+let write_summaries ~summaries_json =
+  process_all_summaries ~summaries_json ;
+
+

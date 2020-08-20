@@ -138,6 +138,7 @@ let create_results_dir () =
   Unix.mkdir_p Config.results_dir ;
   Unix.mkdir_p (get_path Temporary) ;
   Unix.mkdir_p (get_path Specs) ;
+  Unix.mkdir_p (get_path SummariesJson) ;
   prepare_logging_and_db () ;
   ()
 
