@@ -392,14 +392,11 @@ end)
 (* ***************************************** *)
 
 let write_summary summary (outfile : Utils.outfile) =
-  let t_start   = Unix.gettimeofday () in
   let proc_name = Summary.get_proc_name summary in
   let summaries = Summary.get_payloads summary in
   let {Payloads.racerdfix;} = summaries  in
   JsonSummaryPrinter.pp outfile.fmt
-    {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix };
-  let t_end     = Unix.gettimeofday () in
-  print_endline ("   Time (write_summary): " ^ string_of_float (t_end -. t_start))
+    {proc_name; proc_loc = Summary.get_loc summary; summary_opt = racerdfix }
 
 (** Process a summary *)
 let process_summary ~summaries_outf summary =
@@ -409,7 +406,6 @@ let process_summary ~summaries_outf summary =
 
 let process_all_summaries ~summaries_json =
   let mk_outfile fname =
-    let () = print_endline ("\n\n   FILE: " ^ fname) in
     match Utils.create_outfile fname with
     | None ->
         L.die InternalError "Could not create '%s'." fname
@@ -420,7 +416,6 @@ let process_all_summaries ~summaries_json =
   let outf = ref (mk_outfile (summaries_json ^ "/init.txt")) in
   JsonSummaryPrinter.pp_open !outf.fmt () ;
   SpecsFiles.iter_from_config ~f:(fun summary ->
-      let t_start = Unix.gettimeofday () in
         let proc_loc = Summary.get_loc summary in
         let sfile =
           SourceFile.to_string ~force_relative:Config.report_force_relative_path (proc_loc.Location.file) in
@@ -434,8 +429,6 @@ let process_all_summaries ~summaries_json =
           end ;
         let summaries_outf = !outf in
         process_summary ~summaries_outf summary;
-        let t_end = Unix.gettimeofday () in
-        print_endline ("   Time (iter from config): " ^ string_of_float (t_end -. t_start))
     ) ;
   JsonSummaryPrinter.pp_close !outf.fmt () ;
   Utils.close_outf !outf ;
@@ -443,7 +436,6 @@ let process_all_summaries ~summaries_json =
 
 
 let write_summaries ~summaries_json =
-  let () =  print_endline "WRITING SUMMARIES" in
-  process_all_summaries ~summaries_json ;
+  process_all_summaries ~summaries_json 
 
 
