@@ -426,23 +426,29 @@ end = struct
         let map, lock, acquisitions_lifo =
           if !should_remove_acquisition then
             let acquisition = Acquisition.make_dummy lock in
-            let acquisitions_lifo = List.fold_left acquisitions_lifo ~init:[]
-                ~f:(fun a lk -> a@(if Acquisition.compare lk acquisition == 0 then [] else [lk] ))
+            let acquisitions_lifo,_ = List.fold_left acquisitions_lifo ~init:([],false)
+                ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
+                                 then ((fst a),true)
+                                 else ((fst a) @ [lk], (snd a) ) ))
             in
             map, lock, acquisitions_lifo
           else
             begin
               match acquisitions_lifo with
               | []     -> map, lock, acquisitions_lifo
-              | acq::t -> let map = map_fn acq.lock in
+              | acq::t -> begin
+                  should_remove_acquisition := false ;
+                  let map = map_fn acq.lock in
                   map, acq.lock, t
+                end
             end
         in
         let acquisitions = acquisitions_fn lock acquisitions in
         {map; acquisitions; acquisitions_lifo}
     | None ->
         match acquisitions_lifo with
-        | []     -> {map; acquisitions; acquisitions_lifo}
+        | []     ->
+            {map; acquisitions; acquisitions_lifo}
         | acq::t ->
             let map = map_fn acq.lock in
             let acquisitions = acquisitions_fn acq.lock acquisitions in
@@ -1140,9 +1146,11 @@ let release ({lock_state} as astate) locks =
   (***** BEGIN hack to solve nested sync ******)
   match locks with
   | [] ->
+      let () = print_endline "RELEASE - lifo" in
       { astate with lock_state = LockState.release lock_state }
   | _  ->
-  (***** END hack to solve nested sync ******)
+      (***** END hack to solve nested sync ******)
+      let () = print_endline "RELEASE - classic" in
       { astate with
         lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release ~lock:(Some l) acc) }
 

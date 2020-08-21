@@ -316,19 +316,19 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | Unlock locks ->
             let () = print_endline "\n =========================================" in
             let () = print_endline " ANDREEA (UnLock)" in
-            (* let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
+            let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
             let do_unlock locks (* astate *) = List.filter_map ~f:get_lock_path locks (* |> Domain.release astate *) in
             let locks = do_unlock locks in
-            (* let () = print_endline "\n UnLock - init " in
-             * let () = pp Format.std_formatter astate in *)
-            let astate = release astate locks in
+            let () = print_endline "\n UnLock - init " in
+            let () = pp Format.std_formatter astate in
+            let astate = Domain.release astate locks in
             let astate = { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads } in
-            (* let () = print_endline "\n UnLock - final " in
-             * let () = pp Format.std_formatter astate in *)
+            let () = print_endline "\n UnLock - final " in
+            let () = pp Format.std_formatter astate in
             astate
         | GuardDestroy _ | GuardUnlock _ ->
             (* let () = print_endline "\n =========================================" in
