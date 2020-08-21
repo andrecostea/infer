@@ -426,10 +426,14 @@ end = struct
         let map, lock, acquisitions_lifo =
           if !should_remove_acquisition then
             let acquisition = Acquisition.make_dummy lock in
-            let acquisitions_lifo,_ = List.fold_left acquisitions_lifo ~init:([],false)
-                ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
-                                 then ((fst a),true)
-                                 else ((fst a) @ [lk], (snd a) ) ))
+            let acquisitions_lifo =
+              match acquisitions_lifo with
+              | [] -> []
+              | acq::t -> t 
+              (* ,_ = List.fold_left acquisitions_lifo ~init:([],false)
+               *   ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
+               *                    then ((fst a),true)
+               *                    else ((fst a) @ [lk], (snd a) ) )) *)
             in
             map, lock, acquisitions_lifo
           else
@@ -437,7 +441,6 @@ end = struct
               match acquisitions_lifo with
               | []     -> map, lock, acquisitions_lifo
               | acq::t -> begin
-                  should_remove_acquisition := false ;
                   let map = map_fn acq.lock in
                   map, acq.lock, t
                 end
