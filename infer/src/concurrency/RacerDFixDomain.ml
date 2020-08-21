@@ -400,6 +400,8 @@ end = struct
 
   (***** Overwrite the above release to bypass the nested sync bug *****)
   let release ?lock:(lock = None) {map; acquisitions; acquisitions_lifo} =
+    let () = print_endline ("CHECK LENGTHS: " ^ (string_of_int (Acquisitions.cardinal acquisitions)) ^ ", " ^
+                            (string_of_int (List.length acquisitions_lifo))) in
     let should_remove_acquisition = ref false in
     let map_fn lock =
       Map.update lock
