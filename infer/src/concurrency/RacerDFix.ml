@@ -314,9 +314,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             (* TODO-ANDREEA must acquire the lock here *)
             ; threads= update_for_lock_use astate.threads }
         | Unlock locks ->
-            (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (UnLock)" in
-             * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
+            let () = print_endline "\n =========================================" in
+            let () = print_endline " ANDREEA (UnLock)" in
+            (* let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
             let do_unlock locks (* astate *) = List.filter_map ~f:get_lock_path locks (* |> Domain.release astate *) in
@@ -1286,5 +1286,7 @@ let file_analysis ({InterproceduralAnalysis.file_exe_env} as file_t) =
   let class_map = aggregate_by_class file_t in
   Typ.Name.Map.fold
     (fun classname methods issue_log ->
+       print_endline ("CLASSNAME: " );
+       Typ.Name.pp  Format.std_formatter classname;
       make_results_table file_exe_env methods |> report_unsafe_accesses ~issue_log classname )
     class_map IssueLog.empty

@@ -1148,7 +1148,7 @@ let release ({lock_state} as astate) locks =
 
 let release astate locks =
   let result = release astate locks in
-  let () = if false then
+  let () = if true then
       let () = print_endline "\n RELEASE locks: \n" in
       let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
       let () = print_endline "\n RELEASE astate: \n" in
