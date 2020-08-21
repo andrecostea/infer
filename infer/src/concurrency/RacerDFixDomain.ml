@@ -324,18 +324,20 @@ end = struct
      * let () = List.iter acquisitions_lifo ~f:(Acquisition.pp fmt) in *)
     F.fprintf fmt "{map= %a; acquisitions= %a; }" Map.pp map Acquisitions.pp acquisitions
 
+  let remove_dupl acquisitions =
+    List.fold_left acquisitions ~init:[] ~f:(fun acc a -> if (List.exists acc ~f:(fun a0 -> (Acquisition.compare a a0 == 0) ) ) then acc else acc@[a])
 
   let join lhs rhs =
     let map = Map.join lhs.map rhs.map in
     let acquisitions = Acquisitions.inter lhs.acquisitions rhs.acquisitions in
-    let acquisitions_lifo = lhs.acquisitions_lifo@rhs.acquisitions_lifo in
+    let acquisitions_lifo = remove_dupl (lhs.acquisitions_lifo @ rhs.acquisitions_lifo)  in
     {map; acquisitions; acquisitions_lifo }
 
 
   let widen ~prev ~next ~num_iters =
     let map = Map.widen ~prev:prev.map ~next:next.map ~num_iters in
     let acquisitions = Acquisitions.inter prev.acquisitions next.acquisitions in
-    let acquisitions_lifo = prev.acquisitions_lifo@next.acquisitions_lifo in
+    let acquisitions_lifo = remove_dupl (prev.acquisitions_lifo @ next.acquisitions_lifo) in
     {map; acquisitions; acquisitions_lifo }
 
   let leq ~lhs ~rhs = Map.leq ~lhs:lhs.map ~rhs:rhs.map
@@ -368,7 +370,7 @@ end = struct
     let acquisitions, acquisitions_lifo =
       if !should_add_acquisition then
         let acquisition  = Acquisition.make ~procname ~loc lock in
-        let acquisitions_lifo = acquisition::acquisitions_lifo in
+        let acquisitions_lifo = remove_dupl (acquisition::acquisitions_lifo) in
         Acquisitions.add acquisition acquisitions, acquisitions_lifo
       else acquisitions, acquisitions_lifo
     in
@@ -425,31 +427,30 @@ end = struct
     match lock with
     | Some lock ->
         let map = map_fn lock in
-        let map, lock, acquisitions_lifo =
-          if !should_remove_acquisition then
-            let acquisition = Acquisition.make_dummy lock in
-            let acquisitions_lifo =
-              match acquisitions_lifo with
-              | [] -> []
-              | acq::t -> t 
-              (* ,_ = List.fold_left acquisitions_lifo ~init:([],false)
-               *   ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
-               *                    then ((fst a),true)
-               *                    else ((fst a) @ [lk], (snd a) ) )) *)
-            in
-            map, lock, acquisitions_lifo
-          else
-            begin
-              match acquisitions_lifo with
-              | []     -> map, lock, acquisitions_lifo
-              | acq::t -> begin
-                  let map = map_fn acq.lock in
-                  map, acq.lock, t
-                end
-            end
-        in
-        let acquisitions = acquisitions_fn lock acquisitions in
-        {map; acquisitions; acquisitions_lifo}
+        if !should_remove_acquisition then
+          let acquisition = Acquisition.make_dummy lock in
+          let acquisitions_lifo =
+            match acquisitions_lifo with
+            | [] -> []
+            | acq::t -> t 
+            (* ,_ = List.fold_left acquisitions_lifo ~init:([],false)
+             *   ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
+             *                    then ((fst a),true)
+             *                    else ((fst a) @ [lk], (snd a) ) )) *)
+          in
+          let acquisitions = acquisitions_fn lock acquisitions in
+          {map; acquisitions; acquisitions_lifo}
+        else
+          begin
+            match acquisitions_lifo with
+            | []     ->
+                {map; acquisitions; acquisitions_lifo}
+            | acq::t ->
+                let map = map_fn acq.lock in
+                let acquisitions = acquisitions_fn acq.lock acquisitions in
+                let acquisitions_lifo = t in
+                {map; acquisitions; acquisitions_lifo}
+          end
     | None ->
         match acquisitions_lifo with
         | []     ->
