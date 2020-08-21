@@ -1286,6 +1286,5 @@ let file_analysis ({InterproceduralAnalysis.file_exe_env} as file_t) =
   let class_map = aggregate_by_class file_t in
   Typ.Name.Map.fold
     (fun classname methods issue_log ->
-       Typ.Name.pp  Format.std_formatter classname;
       make_results_table file_exe_env methods |> report_unsafe_accesses ~issue_log classname )
     class_map IssueLog.empty
