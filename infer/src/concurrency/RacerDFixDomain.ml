@@ -402,8 +402,8 @@ end = struct
 
   (***** Overwrite the above release to bypass the nested sync bug *****)
   let release ?lock:(lock = None) {map; acquisitions; acquisitions_lifo} =
-    let () = print_endline ("CHECK LENGTHS: " ^ (string_of_int (Acquisitions.cardinal acquisitions)) ^ ", " ^
-                            (string_of_int (List.length acquisitions_lifo))) in
+    (* let () = print_endline ("CHECK LENGTHS: " ^ (string_of_int (Acquisitions.cardinal acquisitions)) ^ ", " ^
+     *                         (string_of_int (List.length acquisitions_lifo))) in *)
     let should_remove_acquisition = ref false in
     let map_fn lock =
       Map.update lock
@@ -1152,17 +1152,15 @@ let release ({lock_state} as astate) locks =
   (***** BEGIN hack to solve nested sync ******)
   match locks with
   | [] ->
-      let () = print_endline "RELEASE - lifo" in
       { astate with lock_state = LockState.release lock_state }
   | _  ->
       (***** END hack to solve nested sync ******)
-      let () = print_endline "RELEASE - classic" in
       { astate with
         lock_state= List.fold locks ~init:lock_state ~f:(fun acc l -> LockState.release ~lock:(Some l) acc) }
 
 let release astate locks =
   let result = release astate locks in
-  let () = if true then
+  let () = if false then
       let () = print_endline "\n RELEASE locks: \n" in
       let () = List.iter locks ~f:(Lock.pp Format.std_formatter) in
       let () = print_endline "\n RELEASE astate: \n" in
