@@ -243,6 +243,8 @@ module AccessSnapshot : sig
 
   val map_opt : FormalMap.t -> f:(AccessExpression.t -> AccessExpression.t) -> t -> t option
 
+  val update_hash : string -> t -> t
+
   val update_callee_access :
        FormalMap.t
     -> t

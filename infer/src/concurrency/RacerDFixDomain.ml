@@ -878,6 +878,8 @@ module AccessSnapshot = struct
   let map_opt formals ~f t =
     map t ~f:(fun elem -> {elem with access= Access.map ~f elem.access}) |> filter formals
 
+  let update_hash new_hash snapshot =
+    map snapshot ~f:(fun elem -> { elem with unique_id = new_hash })
 
   let update_callee_access formals snapshot callsite ownership_precondition threads lock lock_state critical_pair =
     let thread =
@@ -1243,6 +1245,15 @@ let astate_to_summary proc_desc formals {threads; locks; critical_pairs; accesse
         attribute_map
     else AttributeMapDomain.top
   in
+  let accesses = AccessDomain.map (fun x ->
+      let unique_id = Utils.better_hash (proc_name,x.elem.unique_id) |> Caml.Digest.to_hex in
+      AccessSnapshot.update_hash unique_id x )  accesses in
+
+  (* TODO: add method name to accesses hash *)
+  (* let accesses = AccessDomain.map (fun x -> {
+   *       x with elem = {x.elem with 
+   *                      unique_id = Utils.better_hash (proc_name,x.elem.unique_id) |> Caml.Digest.to_hex }}
+   *   ) accesses in *)
   (* fix critical_pairs *)
   {threads; locks; critical_pairs; accesses; return_ownership; return_attribute; attributes}
 
