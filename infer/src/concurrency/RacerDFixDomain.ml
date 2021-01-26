@@ -325,7 +325,7 @@ end = struct
     F.fprintf fmt "{map= %a; acquisitions= %a; }" Map.pp map Acquisitions.pp acquisitions
 
   let remove_dupl acquisitions =
-    List.fold_left acquisitions ~init:[] ~f:(fun acc a -> if (List.exists acc ~f:(fun a0 -> (Acquisition.compare a a0 == 0) ) ) then acc else acc@[a])
+    List.fold_left acquisitions ~init:[] ~f:(fun acc a -> if (List.exists acc ~f:(fun a0 -> (phys_equal (Acquisition.compare a a0) 0) ) ) then acc else acc@[a])
 
   let join lhs rhs =
     let map = Map.join lhs.map rhs.map in
@@ -428,11 +428,11 @@ end = struct
     | Some lock ->
         let map = map_fn lock in
         if !should_remove_acquisition then
-          let acquisition = Acquisition.make_dummy lock in
+          (* let acquisition = Acquisition.make_dummy lock in *)
           let acquisitions_lifo =
             match acquisitions_lifo with
             | [] -> []
-            | acq::t -> t 
+            | _::t -> t
             (* ,_ = List.fold_left acquisitions_lifo ~init:([],false)
              *   ~f:(fun a lk -> (if (Acquisition.compare lk acquisition == 0 && not(snd a) )
              *                    then ((fst a),true)

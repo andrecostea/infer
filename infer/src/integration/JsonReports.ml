@@ -419,12 +419,12 @@ let process_all_summaries ~summaries_json =
         let proc_loc = Summary.get_loc summary in
         let sfile =
           SourceFile.to_string ~force_relative:Config.report_force_relative_path (proc_loc.Location.file) in
-        if (String.compare !file sfile != 0) then
+        if (not (phys_equal (String.compare !file sfile) 0 )) then
           begin
             JsonSummaryPrinter.pp_close !outf.fmt () ;
             Utils.close_outf !outf ;
             file := sfile;
-            outf := mk_outfile (summaries_json ^ "/" ^ (String.tr '/' '_' sfile)) ;
+            outf := mk_outfile (summaries_json ^ "/" ^ (String.tr ~target:'/' ~replacement:'_' sfile)) ;
             JsonSummaryPrinter.pp_open !outf.fmt () ;
           end ;
         let summaries_outf = !outf in
