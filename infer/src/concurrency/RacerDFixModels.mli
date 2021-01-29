@@ -12,6 +12,10 @@ val is_container_read : Tenv.t -> Procname.t -> bool
 val is_container_write : Tenv.t -> Procname.t -> bool
 (** return Some (access) if this procedure accesses the contents of a container (e.g., Map.get) *)
 
+val is_container_w_args_read : Tenv.t -> Procname.t -> bool
+
+val is_container_w_args_write : Tenv.t -> Procname.t -> bool
+
 val has_return_annot : (Annot.Item.t -> bool) -> Procname.t -> bool
 
 val is_functional : Procname.t -> bool

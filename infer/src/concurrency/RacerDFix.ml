@@ -61,10 +61,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let add_access formals loc ~is_write_access locks acqs critical_pair threads ownership tenv access_domain exp =
     (* let () = print_endline "\n =========================================\n" in
-     * let () = print_endline "\n ANDREEA (add_access in): " in *)
+     * let () = print_endline "\n HIPPODROME (add_access in): " in *)
     (* let () = Domain.AccessDomain.pp Format.std_formatter access_domain in *)
     let result = add_access formals loc ~is_write_access locks acqs critical_pair threads ownership tenv access_domain exp in
-    (* let () = print_endline "\n ANDREEA (add_access out): " in
+    (* let () = print_endline "\n HIPPODROME (add_access out): " in
      * let () = Domain.AccessDomain.pp Format.std_formatter result in *)
     result
 
@@ -78,9 +78,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     else
       let ownership_pre = OwnershipDomain.get_owned receiver_ap astate.ownership in
       let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
-      (* let () = print_endline "\n =========================================\n ANDREEA (make_container_access): cp " in
-       * let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
-       * let () = print_string "\n locks: " in
+(*       let () = print_endline "\n =========================================\n HIPPODROME (make_container_access): " in
+       let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in*)
+       (* let () = print_string "\n locks: " in
        * let () = LockDomain.pp  Format.std_formatter astate.locks in
        *  let () = print_endline " " in *)
       let callee_access =
@@ -106,7 +106,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let add_reads formals exps loc (astate: Domain.t) tenv =
     (* let open Domain in *)
     (* let () = print_endline "\n =========================================\n" in
-     * let () = print_endline "\n ANDREEA (read): " in *)
+     * let () = print_endline "\n HIPPODROME (read): " in *)
     (* let () = print_endline "\n Lock: " in
      * let () = LockDomain.pp Format.std_formatter astate.locks in
      * let () = print_endline "\n Lock State: " in
@@ -188,13 +188,14 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks  threads actuals
       callee_pname loc =
-    (* let () = print_endline "\n =========================================\n ANDREEA (add_callee_accesses): " in
+    (* let () = print_endline "\n =========================================\n HIPPODROME (add_callee_accesses): " in
      * let () = Domain.pp  Format.std_formatter caller_astate in
      * let () = print_string "\n callee accesses: \n" in
      * let () = Domain.AccessDomain.pp Format.std_formatter callee_accesses in *)
     let new_astate = add_callee_accesses formals (caller_astate : Domain.t) callee_accesses locks threads actuals
         callee_pname loc in
     (* let () = print_string "\n output: \n" in
+     * let () = print_string "\n output: \n" in
      * let () = Domain.AccessDomain.pp Format.std_formatter new_astate in *)
     new_astate
 
@@ -238,6 +239,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
 
   let do_container_access ~is_write ret_base callee_pname actuals loc analysis_data astate =
+(*
+    let () = print_endline "HIPPODROME: do_container_access " in
+    let () = List.iter actuals ~f:(HilExp.pp Format.std_formatter) in
+    let () = print_endline " ================ " in
+*)
+
     match get_first_actual actuals with
     | Some receiver_expr ->
         make_container_access analysis_data ret_base callee_pname ~is_write receiver_expr loc astate
@@ -292,7 +299,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         match get_lock_effect callee_pname actuals with
         | Lock locks ->
             (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (Lock)" in *)
+             * let () = print_endline " HIPPODROME (Lock)" in *)
             (* let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
@@ -311,11 +318,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         | GuardLock _ | GuardConstruct {acquire_now= true} ->
             { astate with
               locks= LockDomain.acquire_lock astate.locks
-            (* TODO-ANDREEA must acquire the lock here *)
+            (* TODO-HIPPODROME must acquire the lock here *)
             ; threads= update_for_lock_use astate.threads }
         | Unlock locks ->
             (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (UnLock)" in
+             * let () = print_endline " HIPPODROME (UnLock)" in
              * let () = List.iter locks ~f:(HilExp.pp Format.std_formatter) in *)
             let open RacerDFixDomain in
             let get_lock_path = Domain.Lock.make formals in
@@ -332,7 +339,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             astate
         | GuardDestroy _ | GuardUnlock _ ->
             (* let () = print_endline "\n =========================================" in
-             * let () = print_endline " ANDREEA (GuardUnLock)" in *)
+             * let () = print_endline " HIPPODROME (GuardUnLock)" in *)
             { astate with
               locks= LockDomain.release_lock astate.locks
             ; threads= update_for_lock_use astate.threads }
@@ -358,12 +365,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                   LockDomain.integrate_summary ~caller_astate:astate.locks ~callee_astate:locks
                 in
                 let tenv = Some tenv in
-                let lock_state = astate.lock_state in (* TODO-ANDREEA: meaningful info *)
+                let lock_state = astate.lock_state in (* TODO-HIPPODROME: meaningful info *)
                 let critical_pairs' =
                     RacerDFixDomain.with_callsite critical_pairs ?tenv astate.lock_state callsite
                     astate.threads
                 in
-                let critical_pairs = (* TODO-ANDREEA: meaningful info *)
+                let critical_pairs = (* TODO-HIPPODROME: meaningful info *)
                   CriticalPairs.join astate.critical_pairs critical_pairs'
                 in
                 let accesses =
@@ -447,7 +454,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     let result = do_assignment lhs_access_exp rhs_exp loc analysis_data astate in
     (* let open Domain in *)
     (* let () = print_endline "\n =========================================\n" in
-     * let () = print_endline "\n ANDREEA (assignment): " in *)
+     * let () = print_endline "\n HIPPODROME (assignment): " in *)
     (* let () = print_endline "\n Lock: " in
      * let () = LockDomain.pp Format.std_formatter astate.locks in
      * let () = print_endline "\n Lock State: " in
@@ -476,10 +483,10 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
       | Attribute.(Functional | Nothing | Synchronized) ->
           acc
     in
-    (* let () = print_endline "\n ANDREEA (do_assume): " in
+    (* let () = print_endline "\n HIPPODROME (do_assume): " in
      * let () = pp Format.std_formatter astate in *)
     let critical_pair = (CriticalPairs.choose_opt astate.critical_pairs) in
-    (* let () = print_endline "\n =========================================\n ANDREEA (do_assume): cp " in
+    (* let () = print_endline "\n =========================================\n HIPPODROME (do_assume): cp " in
      * let () = CriticalPair.pp_opt  Format.std_formatter critical_pair in
      * let () = print_string "\n locks: " in
      * let () = LockDomain.pp Format.std_formatter astate.locks in
@@ -512,9 +519,33 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         if RacerDFixModels.acquires_ownership callee_pname tenv then
           do_call_acquiring_ownership ret_base astate
         else if RacerDFixModels.is_container_write tenv callee_pname then
-          do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate
+          (* do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate *)
+          (***************** HIPPODROME (start) *****************)
+          (* HIPPODROME: account for read/write library calls *)
+          begin
+             let res = do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate in
+             match actuals with
+             | h::[]    -> res
+             | h::t_act ->
+             if RacerDFixModels.is_container_w_args_write tenv callee_pname then
+                do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data res
+             else res
+             (***************** HIPPODROME (end) *****************)
+          end
         else if RacerDFixModels.is_container_read tenv callee_pname then
-          do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate
+          (* do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate *)
+          (***************** HIPPODROME (start) *****************)
+          (* HIPPODROME: account for read/write library calls *)
+          begin
+            let res =  do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate  in
+            match actuals with
+              | h::[]    -> res
+              | h::t_act ->
+                  if RacerDFixModels.is_container_w_args_read tenv callee_pname then
+                        do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data res
+                  else res
+          end
+          (***************** HIPPODROME (end) *****************)
         else do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
     | Call (_, Indirect _, _, _, _) ->
         if Procname.is_java (Procdesc.get_proc_name proc_desc) then
@@ -528,11 +559,15 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         astate
 
   let exec_instr astate  analysis_data a instr =
-    (* let () = print_endline "\n ANDREEA (exec_instr in): " in
-     * let () = Domain.pp Format.std_formatter astate in *)
+(*
+    let () = print_endline "\n HIPPODROME (exec_instr in): " in
+    let () = Domain.pp Format.std_formatter astate in
+*)
     let result = exec_instr astate analysis_data a instr in
-    (* let () = print_endline "\n ANDREEA (exec_instr out): " in
-     * let () = Domain.pp Format.std_formatter astate in *)
+(*
+    let () = print_endline "\n HIPPODROME (exec_instr out): " in
+    let () = Domain.pp Format.std_formatter result in
+*)
     result
 
 
@@ -665,7 +700,7 @@ let analyze_procedure ({InterproceduralAnalysis.proc_desc; tenv} as interproc) =
     let initial = set_initial_attributes interproc {bottom with ownership; threads; locks} |> make_locks in
     let formals = FormalMap.make proc_desc in
     let analysis_data = {interproc; formals} in
-    Analyzer.compute_post analysis_data ~initial proc_desc  (* ANDREEA-TODO: might need to add teh critical pairs here*)
+    Analyzer.compute_post analysis_data ~initial proc_desc  (* HIPPODROME-TODO: might need to add teh critical pairs here*)
     |> Option.map ~f:(astate_to_summary proc_desc formals)
   else Some empty_summary
 
@@ -794,7 +829,7 @@ let log_issue current_pname ~issue_log ~loc ~ltr ~access
     issue_type error_message =
   Reporting.log_issue_external current_pname ~issue_log ~loc ~ltr ~access ~snapshot1  ~snapshot2 issue_type error_message
 
-(* TODO-ANDREEA add filename too *)
+(* TODO-HIPPODROME add filename too *)
 type reported_access =
   { threads: RacerDFixDomain.ThreadsDomain.t
   ; snapshot: RacerDFixDomain.AccessSnapshot.t
@@ -1231,7 +1266,7 @@ let make_results_table exe_env summaries =
   in
   List.fold summaries ~init:ReportMap.empty ~f:(fun acc (proc_desc, summary) ->
       (* let () = print_endline "\n =========================================\n" in
-       * let () = print_endline "\n ANDREEA (make results table): " in
+       * let () = print_endline "\n HIPPODROME (make results table): " in
        * let () = RacerDFixDomain.pp_summary Format.std_formatter summary in *)
       let procname = Procdesc.get_proc_name proc_desc in
       let tenv = Exe_env.get_tenv exe_env procname in

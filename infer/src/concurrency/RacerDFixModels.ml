@@ -49,7 +49,21 @@ let is_java_container_write =
   ; (* https://docs.oracle.com/javase/8/docs/api/java/util/Collection.html *)
     { default with
       classname= "java.util.Collection"
-    ; methods= ["add"; "addAll"; "clear"; "remove"; "removeAll"; "removeIf"] } ]
+    ; methods= ["add"; "addAll"; "clear"; "remove"; "removeAll"; "removeIf"] }
+  ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+        { default with
+          classname= "java.io.DataOutputStream"
+        ; methods= ["write"] }
+    ]
+  |> of_records
+
+let is_java_container_w_args_write =
+  let open MethodMatcher in
+  [ (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+        { default with
+          classname= "java.io.DataOutputStream"
+        ; methods= ["write"] }
+    ]
   |> of_records
 
 
@@ -110,9 +124,22 @@ let is_java_container_read =
         ; "size"
         ; "spliterator"
         ; "stream"
-        ; "toArray" ] } ]
+        ; "toArray" ] }
+  ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+          { default with
+            classname= "java.io.DataInputStream"
+          ; methods= ["read"] }
+         ]
   |> of_records
 
+let is_java_container_w_args_read =
+  let open MethodMatcher in
+  [  (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+          { default with
+            classname= "java.io.DataInputStream"
+          ; methods= ["read"] }
+         ]
+  |> of_records
 
 let is_cpp_container_read =
   let is_container_operator pname_qualifiers =
@@ -136,17 +163,30 @@ let is_cpp_container_write =
 let is_container_write tenv pn =
   match pn with
   | Procname.Java _ when is_java_container_write tenv pn [] ->
+(*      let () = print_endline ("\n ANDREEA Procedure (write): " ^ (string_of_bool true)) in
+      let () = Procname.pp  Format.std_formatter pn in*)
       true
   | (Procname.ObjC_Cpp _ | C _) when is_cpp_container_write pn ->
       true
   | _ ->
       false
 
+let is_container_w_args_write tenv pn =
+  match pn with
+  | Procname.Java _ when is_java_container_w_args_write tenv pn [] ->
+(*      let () = print_endline ("\n ANDREEA Procedure (write): " ^ (string_of_bool true)) in
+      let () = Procname.pp  Format.std_formatter pn in*)
+      true
+  | _ ->
+      false
 
 let is_container_read tenv pn =
   match pn with
   | Procname.Java _ ->
-      is_java_container_read tenv pn []
+       let res = is_java_container_read tenv pn [] in
+(*       let () = print_endline ("\n ANDREEA Procedure (read): " ^ (string_of_bool res)) in
+       let () = Procname.pp  Format.std_formatter pn in*)
+       res
   (* The following order matters: we want to check if pname is a container write
      before we check if pname is a container read. This is due to a different
      treatment between std::map::operator[] and all other operator[]. *)
@@ -155,6 +195,15 @@ let is_container_read tenv pn =
   | _ ->
       false
 
+let is_container_w_args_read tenv pn =
+  match pn with
+  | Procname.Java _ ->
+       let res = is_java_container_w_args_read tenv pn [] in
+(*       let () = print_endline ("\n ANDREEA Procedure (read): " ^ (string_of_bool res)) in
+       let () = Procname.pp  Format.std_formatter pn in*)
+       res
+  | _ ->
+      false
 
 (** holds of procedure names which should not be analyzed in order to avoid known sources of
     inaccuracy *)

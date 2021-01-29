@@ -874,6 +874,16 @@ module AccessSnapshot = struct
     let locks = LockState.get_acquisitions lock_state in
     make_if_not_owned formals access lock locks critical_pair thread ownership_precondition loc
 
+  let make_container_access formals acc_exp ~is_write callee loc lock lock_state critical_pair thread ownership_precondition =
+    (if(false) then
+     let () = print_endline ("\n ANDREEA (make_container_access), write: " ^ (string_of_bool is_write)) in
+     let () = Procname.pp  Format.std_formatter callee in
+     let () = FormalMap.pp Format.std_formatter formals in
+     let () = AccessExpression.pp Format.std_formatter acc_exp in
+     let () = print_endline " ======= &&&&& ===== " in
+     ()
+    );
+    make_container_access formals acc_exp ~is_write callee loc lock lock_state critical_pair thread ownership_precondition
 
   let map_opt formals ~f t =
     map t ~f:(fun elem -> {elem with access= Access.map ~f elem.access}) |> filter formals
