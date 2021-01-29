@@ -555,15 +555,17 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         astate
 
   let exec_instr astate  analysis_data a instr =
+(*
 
     let () = print_endline "\n HIPPODROME (exec_instr in): " in
     let () = Domain.pp Format.std_formatter astate in
-
+*)
     let result = exec_instr astate analysis_data a instr in
+(*
 
     let () = print_endline "\n HIPPODROME (exec_instr out): " in
     let () = Domain.pp Format.std_formatter result in
-
+*)
     result
 
 
