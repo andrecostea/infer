@@ -521,26 +521,26 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         else if RacerDFixModels.is_container_write tenv callee_pname then
            do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate
         (***************** HIPPODROME (start) *****************)
-        else if RacerDFixModels.is_container_w_args_write tenv callee_pname then
+(*        else if RacerDFixModels.is_container_w_args_write tenv callee_pname then
           (* HIPPODROME: account for read/write library calls *)
           begin
              match actuals with
              | _::[]    -> astate
              | _::t_act ->
                 do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data astate
-          end
+          end*)
          (***************** HIPPODROME (end) *****************)
         else if RacerDFixModels.is_container_read tenv callee_pname then
            do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate
         (***************** HIPPODROME (start) *****************)
-        else if RacerDFixModels.is_container_w_args_read tenv callee_pname then
+(*        else if RacerDFixModels.is_container_w_args_read tenv callee_pname then
           (* HIPPODROME: account for read/write library calls *)
           begin
             match actuals with
               | _::[]    -> astate
               | _::t_act ->
                   do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data astate
-          end
+          end*)
         (***************** HIPPODROME (end) *****************)
         else do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
     | Call (_, Indirect _, _, _, _) ->
