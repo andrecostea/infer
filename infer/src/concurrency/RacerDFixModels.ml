@@ -50,10 +50,6 @@ let is_java_container_write =
     { default with
       classname= "java.util.Collection"
     ; methods= ["add"; "addAll"; "clear"; "remove"; "removeAll"; "removeIf"] }
-  ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
-        { default with
-          classname= "java.io.DataOutputStream"
-        ; methods= ["write"] }
     ]
   |> of_records
 
@@ -125,10 +121,6 @@ let is_java_container_read =
         ; "spliterator"
         ; "stream"
         ; "toArray" ] }
-  ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
-          { default with
-            classname= "java.io.DataInputStream"
-          ; methods= ["read"] }
          ]
   |> of_records
 

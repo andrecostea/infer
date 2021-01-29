@@ -519,33 +519,29 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
         if RacerDFixModels.acquires_ownership callee_pname tenv then
           do_call_acquiring_ownership ret_base astate
         else if RacerDFixModels.is_container_write tenv callee_pname then
-          (* do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate *)
-          (***************** HIPPODROME (start) *****************)
+           do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate
+        (***************** HIPPODROME (start) *****************)
+        else if RacerDFixModels.is_container_w_args_write tenv callee_pname then
           (* HIPPODROME: account for read/write library calls *)
           begin
-             let res = do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate in
              match actuals with
-             | h::[]    -> res
+             | _::[]    -> astate
              | _::t_act ->
-             if RacerDFixModels.is_container_w_args_write tenv callee_pname then
-                do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data res
-             else res
-             (***************** HIPPODROME (end) *****************)
+                do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data astate
           end
+         (***************** HIPPODROME (end) *****************)
         else if RacerDFixModels.is_container_read tenv callee_pname then
-          (* do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate *)
-          (***************** HIPPODROME (start) *****************)
+           do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate
+        (***************** HIPPODROME (start) *****************)
+        else if RacerDFixModels.is_container_w_args_read tenv callee_pname then
           (* HIPPODROME: account for read/write library calls *)
           begin
-            let res =  do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate  in
             match actuals with
-              | h::[]    -> res
+              | _::[]    -> astate
               | _::t_act ->
-                  if RacerDFixModels.is_container_w_args_read tenv callee_pname then
-                        do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data res
-                  else res
+                  do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data astate
           end
-          (***************** HIPPODROME (end) *****************)
+        (***************** HIPPODROME (end) *****************)
         else do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
     | Call (_, Indirect _, _, _, _) ->
         if Procname.is_java (Procdesc.get_proc_name proc_desc) then
