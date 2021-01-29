@@ -526,7 +526,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
              let res = do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate in
              match actuals with
              | h::[]    -> res
-             | h::t_act ->
+             | _::t_act ->
              if RacerDFixModels.is_container_w_args_write tenv callee_pname then
                 do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data res
              else res
@@ -540,7 +540,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
             let res =  do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate  in
             match actuals with
               | h::[]    -> res
-              | h::t_act ->
+              | _::t_act ->
                   if RacerDFixModels.is_container_w_args_read tenv callee_pname then
                         do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data res
                   else res
