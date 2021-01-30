@@ -55,43 +55,15 @@ let is_java_container_write =
 
 let is_java_container_w_args_write =
   let open MethodMatcher in
-  [ (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
-        { default with
-          classname= "java.io.DataOutputStream"
-        ; methods= ["write"] }
-    ;
-    (* https://docs.oracle.com/javase/7/docs/api/java/nio/channels/SocketChannel.html *)
-        { default with
-          classname= "java.nio.channels.SocketChannel"
-        ; methods= ["write"] }
-    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                       { default with
-                         classname= "sun.nio.ch.SelChImpl"
-                       ; methods= ["write"] }
-        ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                       { default with
-                         classname= "sun.nio.ch.SocketChannelImpl"
-                       ; methods= ["write"] }
-        ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                       { default with
-                         classname= "sun.nio.ch.NioChannel"
-                       ; methods= ["write"] }
-                ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+  [
+ (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
                                { default with
                                  classname= "org.apache.tomcat.util.net.NioChannel"
                                ; methods= ["write"] }
-                ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                               { default with
-                                 classname= "org.apache.tomcat.util.net.NioEndpoint"
-                               ; methods= ["write"] }
-                ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                               { default with
-                                 classname= "NioChannel"
-                               ; methods= ["write"] }
-                ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                               { default with
-                                 classname= "NioEndpoint"
-                               ; methods= ["write"] }
+ ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+        { default with
+          classname= "java.io.DataOutputStream"
+        ; methods= ["write"] }
   ]
   |> of_records
 
@@ -159,39 +131,17 @@ let is_java_container_read =
 
 let is_java_container_w_args_read =
   let open MethodMatcher in
-  [  (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
-          { default with
-            classname= "java.io.DataInputStream"
-          ; methods= ["read"] }
-    ;
-     (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-              { default with
-                classname= "java.nio.channels.SocketChannel"
-              ; methods= ["read"] }
-    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                   { default with
-                     classname= "sun.nio.ch.SelChImpl"
-                   ; methods= ["read"] }
-    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                   { default with
-                     classname= "sun.nio.ch.SocketChannelImpl"
-                   ; methods= ["read"] }
-                    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+  [
+                     (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
                                    { default with
                                      classname= "org.apache.tomcat.util.net.NioChannel"
                                    ; methods= ["read"] }
-                    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                                   { default with
-                                     classname= "org.apache.tomcat.util.net.NioEndpoint"
-                                   ; methods= ["read"] }
-                     ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                                    { default with
-                                      classname= "NioChannel"
-                                    ; methods= ["read"] }
-                     ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
-                                    { default with
-                                      classname= "NioEndpoint"
-                                    ; methods= ["read"] }
+                                   ; (* https://docs.oracle.com/javase/7/docs/api/java/io/DataOutputStream.html *)
+                                              { default with
+                                                classname= "java.io.DataInputStream"
+                                              ; methods= ["read"] }
+
+
   ]
   |> of_records
 
