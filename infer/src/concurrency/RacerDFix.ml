@@ -515,6 +515,11 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let exec_instr astate ({interproc= {proc_desc; tenv}; formals} as analysis_data) _ instr =
     match (instr : HilInstr.t) with
     | Call (ret_base, Direct callee_pname, actuals, call_flags, loc) ->
+        let () = print_endline "\n HIPPODROME (call direct): " in
+        let () = print_string "\n Location: " in
+        let () = Location.pp Format.std_formatter loc in
+        let () = print_string "\n Calee: " in
+        let () = Procname.pp  Format.std_formatter callee_pname in
         let astate = add_reads formals actuals loc astate tenv in
         if RacerDFixModels.acquires_ownership callee_pname tenv then
           do_call_acquiring_ownership ret_base astate
@@ -525,7 +530,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           (* HIPPODROME: account for read/write library calls *)
           begin
              match actuals with
-             | _::[]    -> astate
+             | [] | _::[]    -> astate
              | _::t_act ->
                 do_container_access ~is_write:true ret_base callee_pname t_act loc analysis_data astate
           end
@@ -537,13 +542,18 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           (* HIPPODROME: account for read/write library calls *)
           begin
             match actuals with
-              | _::[]    -> astate
+              | [] | _::[]    -> astate
               | _::t_act ->
                   do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data astate
           end
         (***************** HIPPODROME (end) *****************)
         else do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
-    | Call (_, Indirect _, _, _, _) ->
+    | Call (_, Indirect callee_pname, _, _, loc) ->
+            let () = print_endline "\n HIPPODROME (call indirect): " in
+            let () = print_string "\n Location: " in
+            let () = Location.pp Format.std_formatter loc in
+            let () = print_string "\n Calee: " in
+            let () = HilExp.pp  Format.std_formatter callee_pname in
         if Procname.is_java (Procdesc.get_proc_name proc_desc) then
           L.(die InternalError) "Unexpected indirect call instruction %a" HilInstr.pp instr
         else astate
