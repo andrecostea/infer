@@ -64,6 +64,14 @@ let is_java_container_w_args_write =
         { default with
           classname= "java.nio.channels.SocketChannel"
         ; methods= ["write"] }
+    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+                       { default with
+                         classname= "sun.nio.ch.SelChImpl"
+                       ; methods= ["write"] }
+        ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+                       { default with
+                         classname= "sun.nio.ch.SocketChannelImpl"
+                       ; methods= ["write"] }
   ]
   |> of_records
 
@@ -140,7 +148,15 @@ let is_java_container_w_args_read =
               { default with
                 classname= "java.nio.channels.SocketChannel"
               ; methods= ["read"] }
-         ]
+    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+                   { default with
+                     classname= "sun.nio.ch.SelChImpl"
+                   ; methods= ["read"] }
+    ; (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+                   { default with
+                     classname= "sun.nio.ch.SocketChannelImpl"
+                   ; methods= ["read"] }
+  ]
   |> of_records
 
 let is_cpp_container_read =
