@@ -59,7 +59,12 @@ let is_java_container_w_args_write =
         { default with
           classname= "java.io.DataOutputStream"
         ; methods= ["write"] }
-    ]
+    ;
+    (* https://docs.oracle.com/javase/7/docs/api/java/nio/channels/SocketChannel.html *)
+        { default with
+          classname= "java.nio.channels.SocketChannel"
+        ; methods= ["write"] }
+  ]
   |> of_records
 
 
@@ -130,6 +135,11 @@ let is_java_container_w_args_read =
           { default with
             classname= "java.io.DataInputStream"
           ; methods= ["read"] }
+    ;
+     (* https://docs.oracle.com/javase/7/docs/api/java/net/Socket.html *)
+              { default with
+                classname= "java.nio.channels.SocketChannel"
+              ; methods= ["read"] }
          ]
   |> of_records
 
