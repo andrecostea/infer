@@ -515,20 +515,22 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
   let exec_instr astate ({interproc= {proc_desc; tenv}; formals} as analysis_data) _ instr =
     match (instr : HilInstr.t) with
     | Call (ret_base, Direct callee_pname, actuals, call_flags, loc) ->
-        let () = print_endline "\n HIPPODROME (call direct): " in
-        let () = print_string "\n Location: " in
-        let () = Location.pp Format.std_formatter loc in
-        let () = print_string "\n Calee: " in
-        let () = Procname.pp  Format.std_formatter callee_pname in
+(*        let () = print_endline "\n HIPPODROME (call direct): " in*)
+(*        let () = print_string "\n Location: " in*)
+(*        let () = Location.pp Format.std_formatter loc in*)
+(*        let () = print_string "\n Calee: " in*)
+(*        let () = Procname.pp  Format.std_formatter callee_pname in*)
         let astate = add_reads formals actuals loc astate tenv in
         if RacerDFixModels.acquires_ownership callee_pname tenv then
+(*          let () = print_endline "\n HIPPODROME is aquire:" in*)
           do_call_acquiring_ownership ret_base astate
         else if RacerDFixModels.is_container_write tenv callee_pname then
-           let () = print_endline "\n HIPPODROME is write:" in
+(*           let () = print_endline "\n HIPPODROME is write:" in*)
            let () = List.iter actuals ~f:(HilExp.pp Format.std_formatter) in
            do_container_access ~is_write:true ret_base callee_pname actuals loc analysis_data astate
         (***************** HIPPODROME (start) *****************)
         else if RacerDFixModels.is_container_w_args_write tenv callee_pname then
+(*          let () = print_endline "\n HIPPODROME is write - w args:" in*)
           (* HIPPODROME: account for read/write library calls *)
           begin
              match actuals with
@@ -538,11 +540,12 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
           end
          (***************** HIPPODROME (end) *****************)
         else if RacerDFixModels.is_container_read tenv callee_pname then
+(*         let () = print_endline "\n HIPPODROME is read:" in*)
            do_container_access ~is_write:false ret_base callee_pname actuals loc analysis_data astate
         (***************** HIPPODROME (start) *****************)
         else if RacerDFixModels.is_container_w_args_read tenv callee_pname then
-          let () = print_endline "\n HIPPODROME is read:" in
-          let () = List.iter actuals ~f:(HilExp.pp Format.std_formatter) in
+(*          let () = print_endline "\n HIPPODROME is read:" in*)
+(*          let () = List.iter actuals ~f:(HilExp.pp Format.std_formatter) in*)
           (* HIPPODROME: account for read/write library calls *)
           begin
             match actuals with
@@ -551,7 +554,9 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
                   do_container_access ~is_write:false ret_base callee_pname t_act loc analysis_data astate
           end
         (***************** HIPPODROME (end) *****************)
-        else do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
+        else
+(*         let () = print_endline "\n HIPPODROME is call:" in*)
+        do_proc_call ret_base callee_pname actuals call_flags loc analysis_data astate
     | Call (_, Indirect callee_pname, _, _, loc) ->
 (*            let () = print_endline "\n HIPPODROME (call indirect): " in*)
 (*            let () = print_string "\n Location: " in*)
