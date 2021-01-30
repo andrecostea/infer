@@ -1255,15 +1255,14 @@ let astate_to_summary proc_desc formals {threads; locks; critical_pairs; accesse
         attribute_map
     else AttributeMapDomain.top
   in
+
+  (***************** HIPPODROME (start) *****************)
+  (* add proc_name to the hash WHY? *)
   let accesses = AccessDomain.map (fun x ->
       let unique_id = Utils.better_hash (proc_name,x.elem.unique_id) |> Caml.Digest.to_hex in
       AccessSnapshot.update_hash unique_id x )  accesses in
+  (***************** HIPPODROME (end) *****************)
 
-  (* TODO: add method name to accesses hash *)
-  (* let accesses = AccessDomain.map (fun x -> {
-   *       x with elem = {x.elem with 
-   *                      unique_id = Utils.better_hash (proc_name,x.elem.unique_id) |> Caml.Digest.to_hex }}
-   *   ) accesses in *)
   (* fix critical_pairs *)
   {threads; locks; critical_pairs; accesses; return_ownership; return_attribute; attributes}
 
